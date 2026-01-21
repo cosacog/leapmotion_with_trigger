@@ -1,4 +1,30 @@
 #%%
+'''
+Docstring for usb_io2_0_push_button_checker
+
+This script monitors a specific pin (J2-0) on a USB IO device for push button presses.
+It detects rising and falling edges of a pulse signal and measures the pulse width.
+
+moved from learning/usb_io2_0/usb_io2_0_push_button_sample_port_j2_3_short_sleep_time.py
+
+usage: python usb_io2_0_push_button_checker.py
+
+下記ターミナルの出力例. デバイスの検出とスイッチのオンオフが確認できます
+
+Opening device
+Product: USB-IO2.0
+
+J2-0ピンを監視中（2-5msパルス対応）... (Ctrl+Cで終了)
+パルス検出時に幅を表示します
+
+パルス開始 (High→Low)
+パルス #1: 幅 = 396.237 ms
+パルス開始 (High→Low)
+パルス #2: 幅 = 323.999 ms
+パルス開始 (High→Low)
+パルス #3: 幅 = 323.988 ms
+パルス開始 (High→Low)
+'''
 import hid
 import time
 
