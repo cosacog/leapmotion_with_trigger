@@ -1,2 +1,49 @@
+[project]
+name = "leapmotion-handtracking-usb-io"
+version = "0.1.0"
+description = "Leap Motion hand tracking with USB-IO 2.0 trigger integration for synchronized data recording"
+requires-python = ">=3.7"
+authors = [
+    {name = "Your Name", email = "your.email@example.com"},
+]
+readme = "README_PROJECT.md"
+license = {file = "LICENSE.md"}
+
+dependencies = [
+    "numpy>=1.20.0",
+    "opencv-python>=4.5.0",
+    "h5py>=3.0.0",
+    "pynput>=1.7.0",
+    "hidapi>=0.12.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "black>=22.0.0",
+    "flake8>=4.0.0",
+]
+
+[build-system]
+requires = ["setuptools>=45", "wheel", "cffi"]
+build-backend = "setuptools.build_meta"
+
 [tool.black]
 line-length = 99
+target-version = ['py37', 'py38', 'py39', 'py310', 'py311']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+  | leapc-cffi
+  | leapc-python-api
+)/
+'''
