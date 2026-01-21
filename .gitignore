@@ -27,3 +27,6 @@ data/
 
 # Claude configuration
 .claude/
+
+# CI/CD files from upstream (Ultraleap official repository)
+.gitlab-ci.yml
