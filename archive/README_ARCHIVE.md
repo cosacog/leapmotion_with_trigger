@@ -2,7 +2,22 @@
 
 このディレクトリには、プロジェクトの開発過程で作成された旧バージョンのファイルが保管されています。
 
-## ファイル一覧
+## ディレクトリ構成
+
+```
+archive/
+├── development/           # 開発過程のコードとドキュメント
+│   ├── record_and_visualize.py
+│   ├── record_and_visualize260120.py
+│   ├── record_simple.py
+│   ├── record_handtracking.py
+│   ├── test_record_trigger.py
+│   └── RECORDING_IMPROVEMENTS.md
+└── planning/             # 開発計画ドキュメント
+    └── implementation_plan.md
+```
+
+## development/ - 開発履歴ファイル
 
 ### `record_and_visualize.py`
 - **作成時期**: 初期開発段階
@@ -36,6 +51,27 @@
   - OpenCV可視化あり
 - **過去の問題**: デッドロック問題が発生したため、本番では使用しない
 - **現在の状態**: 参考用として保存
+
+### `record_handtracking.py`
+- **作成時期**: プロジェクト初期
+- **目的**: 基本的な手指トラッキングデータの記録
+- **特徴**: シンプルな記録機能のみ
+
+### `RECORDING_IMPROVEMENTS.md`
+- **内容**: `record_and_visualize.py`の改善内容とフレームドロップ対策の技術文書
+- **トピック**:
+  - フレームドロップ抑制の実装（キューサイズ拡大、HDF5最適化）
+  - フレームドロップ検出と統計機能
+  - `analyze_recording.py`の使用方法
+  - ファイルサイズ見積もりと技術的詳細
+- **価値**: フレームドロップ防止の技術的判断の記録
+
+## planning/ - 開発計画
+
+### `implementation_plan.md`
+- **作成者**: antigravity（開発初期のペアプログラミング相手）
+- **内容**: プロジェクト初期の実装計画
+- **価値**: 開発の意思決定の記録
 
 ## 開発の経緯
 
