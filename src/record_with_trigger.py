@@ -174,11 +174,12 @@ def on_trigger_edge(edge_type: str, timestamp: float, pulse_width: float):
     """
     global trigger_status, trigger_pulse_count, high_precision_timer
 
-    # Convert perf_counter to system time if high precision timer is available
-    if high_precision_timer:
-        system_timestamp = high_precision_timer.perf_to_time(timestamp)
-    else:
-        system_timestamp = timestamp
+    # High precision timer is critical for accurate timestamp synchronization
+    if high_precision_timer is None:
+        raise RuntimeError("High precision timer not initialized - cannot process USB-IO trigger")
+
+    # Convert perf_counter to system time
+    system_timestamp = high_precision_timer.perf_to_time(timestamp)
 
     if edge_type == 'falling':
         trigger_status = 1  # Trigger ACTIVE
@@ -403,9 +404,15 @@ def main():
     print("Press 'q' or ESC in the window to stop recording")
     print("Using high-precision timing (perf_counter)\n")
 
-    # Initialize high precision timer for USB-IO
-    high_precision_timer = HighPrecisionTimer()
-    print(f"[INIT] High precision timer initialized")
+    # Initialize high precision timer for USB-IO (critical for timing accuracy)
+    try:
+        high_precision_timer = HighPrecisionTimer()
+        print(f"[INIT] High precision timer initialized")
+    except Exception as e:
+        print(f"[ERROR] Failed to initialize high precision timer: {e}")
+        print(f"[ERROR] High-precision timing is critical for USB-IO synchronization.")
+        print(f"[ERROR] Cannot continue without accurate timestamps.")
+        raise RuntimeError("High precision timer initialization failed") from e
 
     # Initialize USB-IO Monitor with high precision timing
     usb_io_monitor = USBIOMonitor(
