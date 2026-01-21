@@ -1,4 +1,31 @@
+# Leap Motion Hand Tracking with USB-IO Integration
+# Requirements file for Python dependencies
+
+# Build tools
 build
 cffi
-opencv-python
-numpy
+
+# Core scientific computing
+numpy>=1.20.0
+
+# Computer vision and visualization
+opencv-python>=4.5.0
+
+# Data storage (HDF5 format)
+h5py>=3.0.0
+
+# Keyboard input monitoring
+pynput>=1.7.0
+
+# USB device communication
+pyusb>=1.2.0
+
+# Leap Motion SDK
+# Note: Install separately from Ultraleap's official repository
+# https://developer.leapmotion.com/tracking-software-download
+# The leap module is provided by Ultraleap Gemini SDK
+
+# Optional: For development and testing
+# pytest>=7.0.0
+# black>=22.0.0
+# flake8>=4.0.0
