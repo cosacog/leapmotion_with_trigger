@@ -27,14 +27,15 @@ USB-IO 2.0トリガーデバイスと統合したLeap Motionハンドトラッ�
 
 ### 前提条件
 
-1. **Ultraleap Gemini SDK** (5.17以上)
-   - [Ultraleap Developer Site](https://developer.leapmotion.com/tracking-software-download)からダウンロード
+1. **Ultraleap SDK** (Hyperion v 6以上(と思います))
+   - [Ultraleap Developer Site](https://www.ultraleap.com/downloads/leap-motion-controller-2/)からダウンロード
+   - OSの選択 -> Ultraleap Hyperion (作成時 v 6.2.0)
    - デフォルトの場所にインストールするか、`LEAPSDK_INSTALL_LOCATION`環境変数を設定
 
 2. **USB-IO 2.0デバイス** (オプション、トリガー機能用)
-   - Windowsではドライバーのインストールが必要
+   - Windowsではドライバー不要 (と思います)
 
-### セットアップ
+### セットアップ：ai作成のドキュメントで間違いがあるかも知れません
 
 ```bash
 # リポジトリのクローン
@@ -58,6 +59,12 @@ pip install -e leapc-python-api
 ### メイン記録アプリケーション
 
 プロジェクトルートディレクトリから実行:
+
+```bash
+python run_record_with_trigger.py
+```
+
+もしくは srcディレクトリに移動して以下実行：
 
 ```bash
 python record_with_trigger.py
@@ -183,7 +190,7 @@ python test_usb_io_monitor.py
 
 ## バージョン履歴
 
-- **v1.0.0** (2026-01-21): 初回構造化リリース
+- **v0.1.0** (2026-01-22): 初回構造化リリース
   - イベント駆動型USB-IO統合
   - 高精度タイムスタンプ同期
   - 安定したマルチスレッドアーキテクチャ
