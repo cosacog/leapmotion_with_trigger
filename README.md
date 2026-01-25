@@ -64,7 +64,7 @@ pip install -e leapc-python-api
 python run_record_with_trigger.py
 ```
 
-もしくは srcディレクトリに移動して以下実行：
+もしくは srcディレクトリに移動(cd src)して以下実行：
 
 ```bash
 python record_with_trigger.py

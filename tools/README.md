@@ -52,7 +52,7 @@ python tools/visualize_recording.py data/leap_recording_YYYYMMDD_HHMMSS.h5
 
 **Controls:**
 - `SPACE`: Pause/Resume playback
-- `q` or `ESC`: Exit
+- `q` or `ESC` or `Ctrl+C`: Exit
 - Arrow keys: Frame navigation (when paused)
 
 ## Requirements
@@ -64,4 +64,4 @@ Both tools require the same dependencies as the main recording application:
 
 ## Related Documentation
 
-See `archive/development/RECORDING_IMPROVEMENTS.md` for technical details about frame drop prevention and detection strategies used in the recording system.
+See `docs/RECORDING_IMPROVEMENTS.md` for technical details about frame drop prevention and detection strategies used in the recording system.

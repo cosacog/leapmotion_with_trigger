@@ -135,32 +135,32 @@ def main():
             print(f"Total frames: {n_frames}")
             
             canvas = PlaybackCanvas()
-            
+
+            # Helper to extract hand data
+            def get_hand_data(prefix, frame_idx):
+                return {
+                    'valid': f[f'{prefix}/valid'][frame_idx],
+                    'palm_pos': f[f'{prefix}/palm_pos'][frame_idx],
+                    'wrist_pos': f[f'{prefix}/wrist_pos'][frame_idx],
+                    'elbow_pos': f[f'{prefix}/elbow_pos'][frame_idx],
+                    'fingers': f[f'{prefix}/fingers'][frame_idx]
+                }
+
             paused = False
             frame_idx = 0
-            
+
             while True:
                 if not paused:
                     if frame_idx >= n_frames:
                         frame_idx = 0 # Loop
                         print("Replaying...")
-                    
+
                     # Read frame data
                     timestamp = f['leap_timestamp'][frame_idx]
                     status = f['task_status'][frame_idx]
-                    
-                    # Helper to extract hand data
-                    def get_hand_data(prefix):
-                        return {
-                            'valid': f[f'{prefix}/valid'][frame_idx],
-                            'palm_pos': f[f'{prefix}/palm_pos'][frame_idx],
-                            'wrist_pos': f[f'{prefix}/wrist_pos'][frame_idx],
-                            'elbow_pos': f[f'{prefix}/elbow_pos'][frame_idx],
-                            'fingers': f[f'{prefix}/fingers'][frame_idx]
-                        }
 
-                    left_hand = get_hand_data('left_hand')
-                    right_hand = get_hand_data('right_hand')
+                    left_hand = get_hand_data('left_hand', frame_idx)
+                    right_hand = get_hand_data('right_hand', frame_idx)
                     
                     img = canvas.render_frame(frame_idx, timestamp, status, left_hand, right_hand)
                     cv2.imshow(canvas.name, img)
