@@ -17,7 +17,11 @@ import leap
 import cv2
 from pynput import keyboard
 
-from usb_io_monitor import USBIOMonitor
+from usb_io_monitor import (
+    USBIOMonitor,
+    enable_high_resolution_timer,
+    disable_high_resolution_timer
+)
 from timestamp_sync import TimestampConverter, HighPrecisionTimer
 
 # Configuration
@@ -181,10 +185,10 @@ def on_trigger_edge(edge_type: str, timestamp: float, pulse_width: float):
     # Convert perf_counter to system time
     system_timestamp = high_precision_timer.perf_to_time(timestamp)
 
-    if edge_type == 'falling':
+    if edge_type == 'rising':
         trigger_status = 1  # Trigger ACTIVE
         print(f"[TRIGGER] Pulse START at {system_timestamp:.6f}")
-    elif edge_type == 'rising':
+    elif edge_type == 'falling':
         trigger_status = 0  # Trigger IDLE
         trigger_pulse_count += 1
         pulse_width_ms = pulse_width * 1000
@@ -392,6 +396,9 @@ def writer_thread_func(filename):
 def main():
     global is_recording, task_status, high_precision_timer
 
+    # Enable Windows high resolution timer for accurate polling
+    enable_high_resolution_timer()
+
     if not os.path.exists(OUTPUT_DIR):
         os.makedirs(OUTPUT_DIR)
 
@@ -444,6 +451,7 @@ def main():
 
     try:
         with connection.open():
+            connection.set_tracking_mode(leap.TrackingMode.Desktop)  # desktop mode
             print("Leap Motion connection opened. Waiting for data...\n")
 
             while is_recording:
@@ -496,6 +504,9 @@ def main():
         connection.remove_listener(listener)
         writer_thread.join()
         cv2.destroyAllWindows()
+
+        # Restore Windows timer resolution
+        disable_high_resolution_timer()
         print("Recording finished.")
 
 def on_press(key):

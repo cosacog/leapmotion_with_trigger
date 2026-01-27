@@ -17,13 +17,13 @@ Product: USB-IO2.0
 J2-0ピンを監視中（2-5msパルス対応）... (Ctrl+Cで終了)
 パルス検出時に幅を表示します
 
-パルス開始 (High→Low)
+パルス開始 (Low→High)
 パルス #1: 幅 = 396.237 ms
-パルス開始 (High→Low)
+パルス開始 (Low→High)
 パルス #2: 幅 = 323.999 ms
-パルス開始 (High→Low)
+パルス開始 (Low→High)
 パルス #3: 幅 = 323.988 ms
-パルス開始 (High→Low)
+パルス開始 (Low→High)
 '''
 import hid
 import time
@@ -73,11 +73,11 @@ try:
         
         # エッジ検出
         if current_state != prev_state and prev_state is not None:
-            if current_state == 0:  # 立ち下がり（パルス開始）
+            if current_state == 1:  # 立ち上がり（パルス開始）
                 pulse_start_time = current_time
-                print("パルス開始 (High→Low)")
-                
-            elif current_state == 1 and pulse_start_time is not None:  # 立ち上がり（パルス終了）
+                print("パルス開始 (Low→High)")
+
+            elif current_state == 0 and pulse_start_time is not None:  # 立ち下がり（パルス終了）
                 pulse_width = (current_time - pulse_start_time) * 1000  # ms単位
                 pulse_count += 1
                 print(f"パルス #{pulse_count}: 幅 = {pulse_width:.3f} ms")

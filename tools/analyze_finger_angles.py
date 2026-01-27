@@ -16,17 +16,20 @@ def quaternion_to_palm_vectors(quat):
     """
     x, y, z, w = quat
 
-    # palm.normal (手のひら法線、通常は-Y方向)
-    palm_normal = np.array([
-        2*(x*y + w*z),
+    # 回転行列の列ベクトルを抽出（標準的なクォータニオン→回転行列の公式）
+    # Column 2: +Y軸の行き先を反転 = palm_normal（手のひらが向く方向）
+    # Leap Motionの手のひら座標系では+Yが手の甲方向なので反転して外向きにする
+    palm_normal = -np.array([
+        2*(x*y - w*z),
         1 - 2*(x*x + z*z),
-        2*(y*z - w*x)
+        2*(y*z + w*x)
     ])
 
-    # palm.direction (指先方向、通常は-Z方向)
-    palm_direction = np.array([
-        2*(x*z - w*y),
-        2*(y*z + w*x),
+    # Column 3: +Z軸の行き先を反転 = palm_direction（手首→指先方向）
+    # Leap Motionの手のひら座標系では-Zが指先方向なので反転
+    palm_direction = -np.array([
+        2*(x*z + w*y),
+        2*(y*z - w*x),
         1 - 2*(x*x + y*y)
     ])
 
@@ -103,8 +106,8 @@ def calculate_finger_angles(vec1, vec2, palm_ori):
     palm_normal, palm_direction = quaternion_to_palm_vectors(palm_ori)
 
     # 手の座標系を定義
-    # lateral_axis: 横軸（親指→小指方向）= palm_direction × palm_normal
-    lateral_axis = np.cross(palm_direction, palm_normal)
+    # lateral_axis: 横軸（親指→小指方向）= palm_normal × palm_direction
+    lateral_axis = np.cross(palm_normal, palm_direction)
     lateral_axis = lateral_axis / (np.linalg.norm(lateral_axis) + 1e-10)
 
     # 正規化（ゼロベクトル検出）

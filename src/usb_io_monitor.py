@@ -7,7 +7,64 @@ Thread-based non-blocking pulse detection with callback support.
 import hid
 import time
 import threading
+import platform
 from typing import Callable, Optional, Dict, Any
+
+
+# Windows Timer Resolution Enhancement
+_windows_timer_active = False
+
+def enable_high_resolution_timer() -> bool:
+    """
+    Enable high resolution timer on Windows (1ms resolution).
+    Call this at program start for accurate sleep timing.
+
+    Returns:
+        True if successful, False otherwise
+    """
+    global _windows_timer_active
+    if platform.system() != 'Windows':
+        return True  # Not needed on other platforms
+
+    if _windows_timer_active:
+        return True  # Already enabled
+
+    try:
+        import ctypes
+        winmm = ctypes.windll.winmm
+        result = winmm.timeBeginPeriod(1)
+        if result == 0:  # TIMERR_NOERROR
+            _windows_timer_active = True
+            print("[Timer] Windows high resolution timer enabled (1ms)")
+            return True
+        else:
+            print(f"[Timer] Failed to enable high resolution timer: {result}")
+            return False
+    except Exception as e:
+        print(f"[Timer] Error enabling high resolution timer: {e}")
+        return False
+
+
+def disable_high_resolution_timer():
+    """
+    Disable high resolution timer on Windows.
+    Call this at program end to restore system default.
+    """
+    global _windows_timer_active
+    if platform.system() != 'Windows':
+        return
+
+    if not _windows_timer_active:
+        return
+
+    try:
+        import ctypes
+        winmm = ctypes.windll.winmm
+        winmm.timeEndPeriod(1)
+        _windows_timer_active = False
+        print("[Timer] Windows high resolution timer disabled")
+    except Exception as e:
+        print(f"[Timer] Error disabling high resolution timer: {e}")
 
 
 class USBIOMonitor:
@@ -66,8 +123,19 @@ class USBIOMonitor:
             'min_pulse_width': float('inf'),
             'max_pulse_width': 0,
             'avg_pulse_width': 0,
-            'total_pulse_width': 0
+            'total_pulse_width': 0,
+            # Polling interval statistics
+            'poll_count': 0,
+            'min_poll_interval': float('inf'),
+            'max_poll_interval': 0,
+            'avg_poll_interval': 0,
+            'total_poll_interval': 0
         }
+
+        # Polling interval tracking
+        self._last_poll_time = None
+        self._poll_intervals = []  # Recent intervals for analysis
+        self._max_interval_samples = 1000  # Keep last N samples
 
     def open(self) -> bool:
         """
@@ -118,16 +186,13 @@ class USBIOMonitor:
 
     def _read_port(self) -> int:
         """
-        Read port state.
+        Read port state (input only, no output port write-back).
 
         Returns:
             Port 2 state byte
         """
         rcvd = self._send_command(self.CMD_READ_SEND, 0, 0)
-        p1 = rcvd[1]
-        p2 = rcvd[2]
-        self._send_command(self.CMD_READ_SEND, p1, p2)
-        return p2
+        return rcvd[2]
 
     def _monitor_loop(self):
         """Main monitoring loop running in separate thread."""
@@ -135,24 +200,43 @@ class USBIOMonitor:
 
         while not self._stop_event.is_set():
             try:
+                # Measure polling interval
+                loop_start_time = self._time_func()
+
                 # Read current state
                 p2 = self._read_port()
                 current_state = (p2 & self.pin_mask) != 0  # True if high, False if low
                 current_time = self._time_func()  # High precision timer
 
+                # Track polling interval statistics
+                if self._last_poll_time is not None:
+                    poll_interval = loop_start_time - self._last_poll_time
+                    self.stats['poll_count'] += 1
+                    self.stats['min_poll_interval'] = min(self.stats['min_poll_interval'], poll_interval)
+                    self.stats['max_poll_interval'] = max(self.stats['max_poll_interval'], poll_interval)
+                    self.stats['total_poll_interval'] += poll_interval
+                    self.stats['avg_poll_interval'] = self.stats['total_poll_interval'] / self.stats['poll_count']
+
+                    # Keep recent samples for analysis
+                    self._poll_intervals.append(poll_interval)
+                    if len(self._poll_intervals) > self._max_interval_samples:
+                        self._poll_intervals.pop(0)
+
+                self._last_poll_time = loop_start_time
+
                 # Edge detection
                 if current_state != self._prev_state and self._prev_state is not None:
-                    if not current_state:  # Falling edge (High → Low)
+                    if current_state:  # Rising edge (Low → High) = pulse start
                         self._pulse_start_time = current_time
-                        self.stats['falling_edges'] += 1
+                        self.stats['rising_edges'] += 1
 
                         if self.edge_callback:
-                            self.edge_callback('falling', current_time, 0.0)
+                            self.edge_callback('rising', current_time, 0.0)
 
-                    elif current_state and self._pulse_start_time is not None:  # Rising edge (Low → High)
+                    elif not current_state and self._pulse_start_time is not None:  # Falling edge (High → Low) = pulse end
                         pulse_width = (current_time - self._pulse_start_time)
                         self._pulse_count += 1
-                        self.stats['rising_edges'] += 1
+                        self.stats['falling_edges'] += 1
                         self.stats['total_pulses'] += 1
 
                         # Update statistics
@@ -162,7 +246,7 @@ class USBIOMonitor:
                         self.stats['avg_pulse_width'] = self.stats['total_pulse_width'] / self.stats['total_pulses']
 
                         if self.edge_callback:
-                            self.edge_callback('rising', current_time, pulse_width)
+                            self.edge_callback('falling', current_time, pulse_width)
 
                         self._pulse_start_time = None
 
@@ -223,7 +307,60 @@ class USBIOMonitor:
         stats = self.stats.copy()
         if stats['min_pulse_width'] == float('inf'):
             stats['min_pulse_width'] = 0
+        if stats['min_poll_interval'] == float('inf'):
+            stats['min_poll_interval'] = 0
         return stats
+
+    def get_poll_interval_analysis(self) -> Dict[str, Any]:
+        """
+        Get detailed polling interval analysis.
+
+        Returns:
+            Dictionary containing polling interval statistics and histogram
+        """
+        if not self._poll_intervals:
+            return {'error': 'No polling data collected'}
+
+        intervals_ms = [i * 1000 for i in self._poll_intervals]  # Convert to ms
+
+        # Calculate percentiles
+        sorted_intervals = sorted(intervals_ms)
+        n = len(sorted_intervals)
+
+        analysis = {
+            'sample_count': n,
+            'min_ms': min(intervals_ms),
+            'max_ms': max(intervals_ms),
+            'avg_ms': sum(intervals_ms) / n,
+            'median_ms': sorted_intervals[n // 2],
+            'p95_ms': sorted_intervals[int(n * 0.95)] if n >= 20 else sorted_intervals[-1],
+            'p99_ms': sorted_intervals[int(n * 0.99)] if n >= 100 else sorted_intervals[-1],
+            'requested_interval_ms': self.poll_interval * 1000,
+        }
+
+        # Histogram bins (0-1ms, 1-2ms, 2-5ms, 5-10ms, 10-20ms, 20ms+)
+        bins = [0, 1, 2, 5, 10, 20, float('inf')]
+        histogram = {f'{bins[i]}-{bins[i+1]}ms': 0 for i in range(len(bins)-1)}
+        histogram[f'{bins[-2]}ms+'] = histogram.pop(f'{bins[-2]}-infms')
+
+        for interval in intervals_ms:
+            for i in range(len(bins)-1):
+                if bins[i] <= interval < bins[i+1]:
+                    if i == len(bins) - 2:
+                        histogram[f'{bins[i]}ms+'] += 1
+                    else:
+                        histogram[f'{bins[i]}-{bins[i+1]}ms'] += 1
+                    break
+
+        analysis['histogram'] = histogram
+
+        # Calculate effective polling rate
+        if analysis['avg_ms'] > 0:
+            analysis['effective_rate_hz'] = 1000 / analysis['avg_ms']
+        else:
+            analysis['effective_rate_hz'] = 0
+
+        return analysis
 
     def reset_stats(self):
         """Reset statistics."""
@@ -234,9 +371,16 @@ class USBIOMonitor:
             'min_pulse_width': float('inf'),
             'max_pulse_width': 0,
             'avg_pulse_width': 0,
-            'total_pulse_width': 0
+            'total_pulse_width': 0,
+            'poll_count': 0,
+            'min_poll_interval': float('inf'),
+            'max_poll_interval': 0,
+            'avg_poll_interval': 0,
+            'total_poll_interval': 0
         }
         self._pulse_count = 0
+        self._last_poll_time = None
+        self._poll_intervals = []
 
 
 # Context manager support
