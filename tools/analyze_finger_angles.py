@@ -335,6 +335,321 @@ def _save_results(results, source_filepath, hand_type, output_format):
     print(f"\nData export complete!")
 
 
+def extract_trigger_aligned_angles(h5_filepath, hand_type='left', finger_idx=1,
+                                    pre_time=0.1, post_time=0.2):
+    """
+    trigger_onset_timesを基準に角度データを切り出す
+
+    Args:
+        h5_filepath: HDF5ファイルパス
+        hand_type: 'left' or 'right'
+        finger_idx: 指のインデックス (0=Thumb, 1=Index, 2=Middle, 3=Ring, 4=Pinky)
+        pre_time: トリガー前の時間（秒、正の値）デフォルト0.1秒
+        post_time: トリガー後の時間（秒）デフォルト0.2秒
+
+    Returns:
+        dict: {
+            'trigger_times': array of trigger onset times,
+            'time_axis': array of time relative to trigger (seconds),
+            'mcp_flexion': array shape (n_triggers, n_timepoints),
+            'mcp_abduction': array shape (n_triggers, n_timepoints),
+            'overall_flexion': array shape (n_triggers, n_timepoints),
+            'overall_abduction': array shape (n_triggers, n_timepoints),
+            'valid': array shape (n_triggers, n_timepoints),
+            'frame_indices': array shape (n_triggers, n_timepoints),
+        }
+    """
+    finger_names = ['Thumb', 'Index', 'Middle', 'Ring', 'Pinky']
+    print(f"Opening {h5_filepath}...")
+    print(f"Extracting {hand_type} hand {finger_names[finger_idx]} finger angles")
+    print(f"Time window: -{pre_time*1000:.0f}ms to +{post_time*1000:.0f}ms relative to trigger\n")
+
+    with h5py.File(h5_filepath, 'r') as f:
+        # Check if trigger_onset_times exists
+        if 'trigger_onset_times' not in f:
+            raise ValueError("trigger_onset_times not found in HDF5 file. "
+                           "Recording may not have trigger data.")
+
+        # Load data
+        system_timestamp = f['system_timestamp'][:]
+        trigger_onset_times = f['trigger_onset_times'][:]
+        n_triggers = len(trigger_onset_times)
+
+        print(f"Found {n_triggers} triggers")
+        print(f"Total frames: {len(system_timestamp)}")
+
+        if n_triggers == 0:
+            raise ValueError("No triggers found in the recording.")
+
+        hand_prefix = f'{hand_type}_hand'
+        valid = f[f'{hand_prefix}/valid'][:]
+        palm_ori = f[f'{hand_prefix}/palm_ori'][:]
+        fingers = f[f'{hand_prefix}/fingers'][:]
+
+        # Target finger data
+        finger_data = fingers[:, finger_idx, :, :, :]  # shape: (n_frames, 4, 2, 3)
+
+        # Estimate sampling rate from data
+        dt = np.median(np.diff(system_timestamp))
+        sampling_rate = 1.0 / dt
+        print(f"Estimated sampling rate: {sampling_rate:.1f} Hz")
+
+        # Calculate number of samples for the time window
+        n_pre_samples = int(np.ceil(pre_time / dt))
+        n_post_samples = int(np.ceil(post_time / dt))
+        n_timepoints = n_pre_samples + n_post_samples + 1
+
+        # Create time axis relative to trigger
+        time_axis = np.arange(-n_pre_samples, n_post_samples + 1) * dt
+
+        # Initialize output arrays
+        mcp_flexion = np.full((n_triggers, n_timepoints), np.nan)
+        mcp_abduction = np.full((n_triggers, n_timepoints), np.nan)
+        overall_flexion = np.full((n_triggers, n_timepoints), np.nan)
+        overall_abduction = np.full((n_triggers, n_timepoints), np.nan)
+        valid_mask = np.zeros((n_triggers, n_timepoints), dtype=bool)
+        frame_indices = np.full((n_triggers, n_timepoints), -1, dtype=int)
+
+        # Extract epochs for each trigger
+        for trig_idx, trig_time in enumerate(trigger_onset_times):
+            # Find the frame closest to trigger time
+            center_idx = np.searchsorted(system_timestamp, trig_time)
+
+            # Calculate start and end frame indices
+            start_idx = center_idx - n_pre_samples
+            end_idx = center_idx + n_post_samples + 1
+
+            # Check bounds
+            if start_idx < 0 or end_idx > len(system_timestamp):
+                print(f"  Trigger {trig_idx + 1}: Out of bounds (skipping)")
+                continue
+
+            # Extract frames for this epoch
+            for i, frame_idx in enumerate(range(start_idx, end_idx)):
+                frame_indices[trig_idx, i] = frame_idx
+
+                if not valid[frame_idx]:
+                    continue
+
+                valid_mask[trig_idx, i] = True
+
+                # Calculate MCP angles
+                mcp_flex, mcp_abd = calculate_mcp_angles(
+                    finger_data[frame_idx],
+                    palm_ori[frame_idx]
+                )
+                mcp_flexion[trig_idx, i] = mcp_flex
+                mcp_abduction[trig_idx, i] = mcp_abd
+
+                # Calculate overall angles
+                overall_flex, overall_abd = calculate_overall_bend_angle(
+                    finger_data[frame_idx],
+                    palm_ori[frame_idx]
+                )
+                overall_flexion[trig_idx, i] = overall_flex
+                overall_abduction[trig_idx, i] = overall_abd
+
+            # Print progress
+            if (trig_idx + 1) % 10 == 0 or trig_idx == 0:
+                valid_count = np.sum(valid_mask[trig_idx])
+                print(f"  Trigger {trig_idx + 1}/{n_triggers}: {valid_count}/{n_timepoints} valid frames")
+
+        print(f"\nExtraction complete!")
+        print(f"  Valid epochs: {np.sum(np.any(valid_mask, axis=1))}/{n_triggers}")
+
+        return {
+            'trigger_times': trigger_onset_times,
+            'time_axis': time_axis,
+            'mcp_flexion': mcp_flexion,
+            'mcp_abduction': mcp_abduction,
+            'overall_flexion': overall_flexion,
+            'overall_abduction': overall_abduction,
+            'valid': valid_mask,
+            'frame_indices': frame_indices,
+            'sampling_rate': sampling_rate,
+            'hand_type': hand_type,
+            'finger_name': finger_names[finger_idx],
+        }
+
+
+def save_trigger_aligned_data(data, output_filepath):
+    """
+    extract_trigger_aligned_anglesの結果をHDF5ファイルに保存
+
+    Args:
+        data: extract_trigger_aligned_anglesの戻り値
+        output_filepath: 出力ファイルパス
+    """
+    with h5py.File(output_filepath, 'w') as f:
+        # Metadata
+        f.attrs['hand_type'] = data['hand_type']
+        f.attrs['finger_name'] = data['finger_name']
+        f.attrs['sampling_rate'] = data['sampling_rate']
+        f.attrs['n_triggers'] = len(data['trigger_times'])
+        f.attrs['n_timepoints'] = len(data['time_axis'])
+
+        # Data
+        f.create_dataset('trigger_times', data=data['trigger_times'], dtype='f8')
+        f.create_dataset('time_axis', data=data['time_axis'], dtype='f8')
+        f.create_dataset('mcp_flexion', data=data['mcp_flexion'], dtype='f8')
+        f.create_dataset('mcp_abduction', data=data['mcp_abduction'], dtype='f8')
+        f.create_dataset('overall_flexion', data=data['overall_flexion'], dtype='f8')
+        f.create_dataset('overall_abduction', data=data['overall_abduction'], dtype='f8')
+        f.create_dataset('valid', data=data['valid'], dtype='bool')
+        f.create_dataset('frame_indices', data=data['frame_indices'], dtype='i4')
+
+    print(f"Saved to: {output_filepath}")
+
+
+def plot_trigger_aligned_angles(data, angle_type='mcp_flexion', show_trials=True,
+                                  mep_window=(20, 50), figsize=(12, 8), save_path=None):
+    """
+    トリガー整列した角度データをプロット
+
+    Args:
+        data: extract_trigger_aligned_anglesの戻り値
+        angle_type: プロットする角度タイプ
+                   'mcp_flexion', 'mcp_abduction', 'overall_flexion', 'overall_abduction'
+        show_trials: 各試行のデータを重ね書きするか
+        mep_window: MEPウィンドウ (start_ms, end_ms) または None
+        figsize: 図のサイズ
+        save_path: 保存先パス（Noneの場合は保存しない）
+
+    Returns:
+        fig, ax: matplotlib figure and axes
+    """
+    import matplotlib.pyplot as plt
+
+    # 時間軸をmsに変換
+    time_ms = data['time_axis'] * 1000
+
+    # 角度データを取得
+    angle_data = data[angle_type]
+
+    # 角度タイプの日本語/英語ラベル
+    angle_labels = {
+        'mcp_flexion': 'MCP Flexion',
+        'mcp_abduction': 'MCP Abduction',
+        'overall_flexion': 'Overall Flexion',
+        'overall_abduction': 'Overall Abduction'
+    }
+    angle_label = angle_labels.get(angle_type, angle_type)
+
+    # 統計量を計算
+    mean_angle = np.nanmean(angle_data, axis=0)
+    std_angle = np.nanstd(angle_data, axis=0)
+    n_trials = angle_data.shape[0]
+
+    # プロット作成
+    fig, ax = plt.subplots(figsize=figsize)
+
+    # MEPウィンドウをハイライト
+    if mep_window is not None:
+        ax.axvspan(mep_window[0], mep_window[1], alpha=0.15, color='yellow',
+                   label=f'MEP window ({mep_window[0]}-{mep_window[1]}ms)')
+
+    # 各試行のデータをプロット
+    if show_trials:
+        for i in range(n_trials):
+            ax.plot(time_ms, angle_data[i], color='black', alpha=0.7, linewidth=1.5)
+
+    # 平均±SDをプロット
+    ax.fill_between(time_ms, mean_angle - std_angle, mean_angle + std_angle,
+                    alpha=0.4, color='blue', label='Mean ± SD')
+    ax.plot(time_ms, mean_angle, 'b-', linewidth=2, label='Mean')
+
+    # トリガー時刻の縦線
+    ax.axvline(0, color='red', linestyle='--', linewidth=1.5, label='TTL trigger')
+
+    # ラベルとタイトル
+    ax.set_xlabel('Time from trigger (ms)', fontsize=12)
+    ax.set_ylabel(f'{angle_label} (deg)', fontsize=12)
+    ax.set_title(f"{data['hand_type'].capitalize()} {data['finger_name']} finger - {angle_label}\n"
+                 f"(n={n_trials} trials, {data['sampling_rate']:.1f} Hz)", fontsize=14)
+
+    # グリッドと凡例
+    ax.grid(True, alpha=0.3)
+    ax.legend(loc='upper right')
+
+    # x軸の範囲を設定
+    ax.set_xlim(time_ms[0], time_ms[-1])
+
+    plt.tight_layout()
+
+    # 保存
+    if save_path is not None:
+        fig.savefig(save_path, dpi=150, bbox_inches='tight')
+        print(f"Figure saved to: {save_path}")
+
+    return fig, ax
+
+
+def plot_all_angles(data, show_trials=True, mep_window=(20, 50), figsize=(14, 10), save_path=None):
+    """
+    4つの角度タイプを2x2のサブプロットで表示
+
+    Args:
+        data: extract_trigger_aligned_anglesの戻り値
+        show_trials: 各試行のデータを重ね書きするか
+        mep_window: MEPウィンドウ (start_ms, end_ms) または None
+        figsize: 図のサイズ
+        save_path: 保存先パス（Noneの場合は保存しない）
+
+    Returns:
+        fig, axes: matplotlib figure and axes
+    """
+    import matplotlib.pyplot as plt
+
+    angle_types = ['mcp_flexion', 'mcp_abduction', 'overall_flexion', 'overall_abduction']
+    angle_labels = ['MCP Flexion', 'MCP Abduction', 'Overall Flexion', 'Overall Abduction']
+
+    time_ms = data['time_axis'] * 1000
+    n_trials = data['mcp_flexion'].shape[0]
+
+    fig, axes = plt.subplots(2, 2, figsize=figsize)
+    axes = axes.flatten()
+
+    for idx, (angle_type, angle_label) in enumerate(zip(angle_types, angle_labels)):
+        ax = axes[idx]
+        angle_data = data[angle_type]
+
+        mean_angle = np.nanmean(angle_data, axis=0)
+        std_angle = np.nanstd(angle_data, axis=0)
+
+        # MEPウィンドウ
+        if mep_window is not None:
+            ax.axvspan(mep_window[0], mep_window[1], alpha=0.15, color='yellow')
+
+        # 各試行
+        if show_trials:
+            for i in range(n_trials):
+                ax.plot(time_ms, angle_data[i], color='black', alpha=0.7, linewidth=1.5)
+
+        # 平均±SD
+        ax.fill_between(time_ms, mean_angle - std_angle, mean_angle + std_angle,
+                        alpha=0.4, color='blue')
+        ax.plot(time_ms, mean_angle, 'b-', linewidth=2)
+
+        # トリガー線
+        ax.axvline(0, color='red', linestyle='--', linewidth=1.5)
+
+        ax.set_xlabel('Time (ms)', fontsize=10)
+        ax.set_ylabel(f'{angle_label} (deg)', fontsize=10)
+        ax.set_title(angle_label, fontsize=12)
+        ax.grid(True, alpha=0.3)
+        ax.set_xlim(time_ms[0], time_ms[-1])
+
+    fig.suptitle(f"{data['hand_type'].capitalize()} {data['finger_name']} finger - "
+                 f"Trigger-aligned angles (n={n_trials})", fontsize=14)
+    plt.tight_layout()
+
+    if save_path is not None:
+        fig.savefig(save_path, dpi=150, bbox_inches='tight')
+        print(f"Figure saved to: {save_path}")
+
+    return fig, axes
+
+
 def main():
     """
     Usage:

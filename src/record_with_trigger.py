@@ -1,7 +1,15 @@
 # -*- coding: utf-8 -*-
 """
-Leap Motion Hand Tracking Recorder with USB-IO Trigger
-Records Leap Motion data with external trigger input via USB-IO.
+Leap Motion Hand Tracking Recorder with External Trigger Support
+Records Leap Motion data with external trigger input via USB-IO or Arduino.
+
+Usage:
+    python record_with_trigger.py [--trigger usb-io|arduino|none] [--port COM9]
+
+Trigger sources:
+    usb-io  : USB-IO device (default, 100μs polling)
+    arduino : Arduino Nano with hardware interrupt (μs precision)
+    none    : No external trigger
 """
 
 import sys
@@ -11,18 +19,37 @@ import threading
 import datetime
 import os
 import signal
+import argparse
 import numpy as np
 import h5py
 import leap
 import cv2
 from pynput import keyboard
 
-from usb_io_monitor import (
-    USBIOMonitor,
-    enable_high_resolution_timer,
-    disable_high_resolution_timer
-)
-from timestamp_sync import TimestampConverter, HighPrecisionTimer
+# Conditional imports for trigger sources
+try:
+    from usb_io_monitor import (
+        USBIOMonitor,
+        enable_high_resolution_timer,
+        disable_high_resolution_timer
+    )
+    USB_IO_AVAILABLE = True
+except ImportError:
+    USB_IO_AVAILABLE = False
+    def enable_high_resolution_timer(): pass
+    def disable_high_resolution_timer(): pass
+
+try:
+    from arduino_trigger_monitor import ArduinoTriggerMonitor
+    ARDUINO_AVAILABLE = True
+except ImportError:
+    ARDUINO_AVAILABLE = False
+
+# Optional import (not critical)
+try:
+    from timestamp_sync import TimestampConverter, HighPrecisionTimer
+except ImportError:
+    HighPrecisionTimer = None
 
 # Configuration
 OUTPUT_DIR = 'data'
@@ -146,9 +173,12 @@ class LiveCanvas:
 # Global State
 is_recording = True
 task_status = 0  # SPACE key
-trigger_status = 0  # USB-IO trigger
+trigger_status = 0  # External trigger
 frame_drop_count = 0
 trigger_pulse_count = 0
+trigger_timestamps = []  # TTL pulse onset times (perf_counter)
+trigger_source = 'none'  # 'usb-io', 'arduino', or 'none'
+arduino_monitor = None  # Arduino monitor instance (for sync data)
 
 class LatestFrameContainer:
     def __init__(self):
@@ -168,31 +198,49 @@ data_queue = queue.Queue(maxsize=QUEUE_SIZE)
 high_precision_timer = None  # High precision timer for USB-IO
 
 # USB-IO Edge Detection Callback
-def on_trigger_edge(edge_type: str, timestamp: float, pulse_width: float):
+def on_usb_io_trigger_edge(edge_type: str, timestamp: float, pulse_width: float):
     """
     Called when USB-IO trigger edge is detected.
 
     Args:
-        timestamp: perf_counter timestamp (needs conversion to system time)
+        timestamp: perf_counter timestamp from USBIOMonitor
         pulse_width: Pulse width in seconds
     """
-    global trigger_status, trigger_pulse_count, high_precision_timer
-
-    # High precision timer is critical for accurate timestamp synchronization
-    if high_precision_timer is None:
-        raise RuntimeError("High precision timer not initialized - cannot process USB-IO trigger")
-
-    # Convert perf_counter to system time
-    system_timestamp = high_precision_timer.perf_to_time(timestamp)
+    global trigger_status, trigger_pulse_count, trigger_timestamps
 
     if edge_type == 'rising':
         trigger_status = 1  # Trigger ACTIVE
-        print(f"[TRIGGER] Pulse START at {system_timestamp:.6f}")
+        trigger_timestamps.append(timestamp)  # Record perf_counter timestamp directly
+        print(f"[USB-IO] Pulse START (perf_counter: {timestamp:.6f})")
     elif edge_type == 'falling':
         trigger_status = 0  # Trigger IDLE
         trigger_pulse_count += 1
         pulse_width_ms = pulse_width * 1000
-        print(f"[TRIGGER] Pulse END (#{trigger_pulse_count}) - Width: {pulse_width_ms:.3f} ms")
+        print(f"[USB-IO] Pulse END (#{trigger_pulse_count}) - Width: {pulse_width_ms:.3f} ms")
+
+
+# Arduino Trigger Callback
+def on_arduino_trigger(arduino_time_us: int, pc_time: float):
+    """
+    Called when Arduino detects a trigger.
+
+    Args:
+        arduino_time_us: Arduino micros() timestamp
+        pc_time: PC perf_counter at receive time
+    """
+    global trigger_status, trigger_pulse_count, trigger_timestamps
+
+    trigger_status = 1  # Trigger ACTIVE (brief)
+    trigger_timestamps.append(pc_time)  # Use PC receive time for now
+    trigger_pulse_count += 1
+    print(f"[Arduino] Trigger #{trigger_pulse_count} (arduino={arduino_time_us}us, pc={pc_time:.6f}s)")
+
+    # Auto-reset trigger status after short delay (for display)
+    def reset_status():
+        global trigger_status
+        time.sleep(0.05)
+        trigger_status = 0
+    threading.Thread(target=reset_status, daemon=True).start()
 
 class RecordingListener(leap.Listener):
     def __init__(self):
@@ -214,15 +262,13 @@ class RecordingListener(leap.Listener):
 
         self._frame_count += 1
 
-        # Simple timestamp sync without locks
+        # Use perf_counter directly for consistent timing with TTL trigger
+        system_time = time.perf_counter()
+
         if self._first_leap_time is None:
             self._first_leap_time = event.timestamp
-            self._first_system_time = time.perf_counter()
-            print(f"[LEAP] First frame received! Timestamp sync initialized.")
-
-        # Convert Leap timestamp to system time
-        leap_elapsed_us = event.timestamp - self._first_leap_time
-        system_time = self._first_system_time + (leap_elapsed_us / 1_000_000)
+            self._first_system_time = system_time
+            print(f"[LEAP] First frame received! system_time base: {system_time:.6f}")
 
         # Debug: print every 90 frames (1 second at 90Hz)
         if self._frame_count % 90 == 0:
@@ -377,13 +423,44 @@ def writer_thread_func(filename):
 
                 last_save_time = time.time()
 
+        # Save trigger onset times
+        if trigger_timestamps:
+            f.create_dataset('trigger_onset_times', data=trigger_timestamps, dtype='f8')
+
+        # Save Arduino-specific data for post-processing
+        if trigger_source == 'arduino' and arduino_monitor is not None:
+            # Save raw Arduino timestamps for high-precision analysis
+            if arduino_monitor.trigger_times_us:
+                f.create_dataset('arduino_trigger_times_us',
+                                data=arduino_monitor.trigger_times_us, dtype='i8')
+
+            # Save sync points for drift correction
+            arduino_sync = f.create_group('arduino_sync')
+            if arduino_monitor.sync_start_arduino_us is not None:
+                arduino_sync.attrs['start_arduino_us'] = arduino_monitor.sync_start_arduino_us
+                arduino_sync.attrs['start_pc_time'] = arduino_monitor.sync_start_pc_time
+            if arduino_monitor.sync_end_arduino_us is not None:
+                arduino_sync.attrs['end_arduino_us'] = arduino_monitor.sync_end_arduino_us
+                arduino_sync.attrs['end_pc_time'] = arduino_monitor.sync_end_pc_time
+                arduino_sync.attrs['drift_us'] = arduino_monitor.stats.get('sync_drift_us', 0)
+
+            # Save corrected trigger times
+            try:
+                corrected_times = arduino_monitor.get_trigger_times_pc()
+                if corrected_times:
+                    f.create_dataset('trigger_onset_times_corrected',
+                                    data=corrected_times, dtype='f8')
+            except:
+                pass
+
         # Save metadata
         f.attrs['total_frames_recorded'] = dset_lts.shape[0]
         f.attrs['frames_dropped'] = frame_drop_count
         f.attrs['trigger_pulses'] = trigger_pulse_count
+        f.attrs['trigger_source'] = trigger_source
         f.attrs['queue_size'] = QUEUE_SIZE
         f.attrs['save_interval'] = SAVE_INTERVAL
-        f.attrs['note'] = 'system_timestamp uses perf_counter base'
+        f.attrs['note'] = 'system_timestamp and trigger_onset_times use perf_counter base'
 
         print(f"\nRecording statistics:")
         print(f"  Total frames recorded: {dset_lts.shape[0]}")
@@ -393,8 +470,36 @@ def writer_thread_func(filename):
             drop_rate = 100.0 * frame_drop_count / (dset_lts.shape[0] + frame_drop_count)
             print(f"  Drop rate: {drop_rate:.2f}%")
 
+def parse_args():
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(
+        description='Record Leap Motion data with external trigger support',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Trigger sources:
+  usb-io  : USB-IO device (100μs polling)
+  arduino : Arduino Nano with hardware interrupt (μs precision)
+  none    : No external trigger (Leap Motion only)
+
+Examples:
+  python record_with_trigger.py
+  python record_with_trigger.py --trigger arduino --port COM9
+  python record_with_trigger.py --trigger none
+        """
+    )
+    parser.add_argument('--trigger', '-t', choices=['usb-io', 'arduino', 'none'],
+                        default='usb-io', help='Trigger source (default: usb-io)')
+    parser.add_argument('--port', '-p', type=str, default=None,
+                        help='COM port for Arduino (auto-detect if not specified)')
+    return parser.parse_args()
+
+
 def main():
-    global is_recording, task_status, high_precision_timer
+    global is_recording, task_status, trigger_source, arduino_monitor
+
+    # Parse arguments
+    args = parse_args()
+    trigger_source = args.trigger
 
     # Enable Windows high resolution timer for accurate polling
     enable_high_resolution_timer()
@@ -406,35 +511,54 @@ def main():
     filename = os.path.join(OUTPUT_DIR, f"{FILENAME_PREFIX}{timestamp_str}.h5")
 
     print(f"Starting recording to {filename}")
+    print(f"Trigger source: {trigger_source}")
     print("Press SPACE to mark task status = 1")
-    print("USB-IO J2-0 pin will trigger automatically")
     print("Press 'q' or ESC in the window to stop recording")
     print("Using high-precision timing (perf_counter)\n")
 
-    # Initialize high precision timer for USB-IO (critical for timing accuracy)
-    try:
-        high_precision_timer = HighPrecisionTimer()
-        print(f"[INIT] High precision timer initialized")
-    except Exception as e:
-        print(f"[ERROR] Failed to initialize high precision timer: {e}")
-        print(f"[ERROR] High-precision timing is critical for USB-IO synchronization.")
-        print(f"[ERROR] Cannot continue without accurate timestamps.")
-        raise RuntimeError("High precision timer initialization failed") from e
+    # Initialize trigger source
+    usb_io_monitor = None
+    arduino_monitor = None
 
-    # Initialize USB-IO Monitor with high precision timing
-    usb_io_monitor = USBIOMonitor(
-        pin_mask=USB_IO_PIN_MASK,
-        poll_interval=USB_IO_POLL_INTERVAL,
-        edge_callback=on_trigger_edge,
-        use_high_precision=True  # Use perf_counter
-    )
+    if trigger_source == 'usb-io':
+        if not USB_IO_AVAILABLE:
+            print("[ERROR] USB-IO module not available")
+            return
 
-    if not usb_io_monitor.open():
-        print("[INIT] Warning: Failed to open USB-IO device. Continuing without trigger...")
-        usb_io_monitor = None
-    else:
-        usb_io_monitor.start()
-        print("[INIT] USB-IO monitor started")
+        usb_io_monitor = USBIOMonitor(
+            pin_mask=USB_IO_PIN_MASK,
+            poll_interval=USB_IO_POLL_INTERVAL,
+            edge_callback=on_usb_io_trigger_edge,
+            use_high_precision=True
+        )
+
+        if not usb_io_monitor.open():
+            print("[INIT] Warning: Failed to open USB-IO device. Continuing without trigger...")
+            usb_io_monitor = None
+        else:
+            usb_io_monitor.start()
+            print("[INIT] USB-IO monitor started")
+
+    elif trigger_source == 'arduino':
+        if not ARDUINO_AVAILABLE:
+            print("[ERROR] Arduino module not available. Install pyserial.")
+            return
+
+        arduino_monitor = ArduinoTriggerMonitor(
+            port=args.port,
+            trigger_callback=on_arduino_trigger,
+            auto_connect=False
+        )
+
+        if not arduino_monitor.connect(args.port):
+            print("[INIT] Warning: Failed to connect to Arduino. Continuing without trigger...")
+            arduino_monitor = None
+        else:
+            arduino_monitor.start()
+            print("[INIT] Arduino trigger monitor started")
+
+    elif trigger_source == 'none':
+        print("[INIT] No external trigger configured")
 
     # Start Writer Thread
     writer_thread = threading.Thread(target=writer_thread_func, args=(filename,), daemon=False)
@@ -500,6 +624,15 @@ def main():
                 print(f"  Max pulse width: {usb_io_stats['max_pulse_width']*1000:.3f} ms")
                 print(f"  Avg pulse width: {usb_io_stats['avg_pulse_width']*1000:.3f} ms")
             usb_io_monitor.close()
+
+        # Stop Arduino monitor
+        if arduino_monitor:
+            arduino_monitor.stop()
+            arduino_stats = arduino_monitor.get_stats()
+            print(f"\nArduino Statistics:")
+            print(f"  Total triggers: {arduino_stats['trigger_count']}")
+            print(f"  Sync drift: {arduino_stats['sync_drift_us']:.1f} μs")
+            arduino_monitor.disconnect()
 
         connection.remove_listener(listener)
         writer_thread.join()
