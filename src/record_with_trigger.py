@@ -10,6 +10,30 @@ Trigger sources:
     usb-io  : USB-IO device (default, 100μs polling)
     arduino : Arduino Nano with hardware interrupt (μs precision)
     none    : No external trigger
+
+HDF5 Output Structure:
+    Timestamps (per frame):
+        leap_timestamp           : Leap Motion internal clock (microseconds, int64)
+        system_timestamp         : PC time when frame was received (perf_counter seconds, float64)
+        leap_timestamp_corrected : Leap timestamp converted to PC time with drift correction
+                                   (perf_counter seconds, float64)
+
+    Trigger data:
+        trigger_onset_times           : PC time when trigger was received via serial
+                                        (perf_counter seconds, float64)
+        trigger_onset_times_corrected : Arduino timestamp converted to PC time with drift correction
+                                        (perf_counter seconds, float64)
+        arduino_trigger_times_us      : Raw Arduino micros() timestamps (microseconds, int64)
+
+    Sync groups (for post-processing):
+        leap_sync/    : Leap Motion clock synchronization points
+        arduino_sync/ : Arduino clock synchronization points
+
+    Time alignment notes:
+        - leap_timestamp_corrected and trigger_onset_times_corrected use the same
+          PC time base (perf_counter), enabling accurate temporal alignment
+        - Linear interpolation between start/end sync points corrects clock drift
+        - USB/serial communication delays (2-8ms typical) are eliminated in corrected values
 """
 
 import sys
@@ -44,12 +68,6 @@ try:
     ARDUINO_AVAILABLE = True
 except ImportError:
     ARDUINO_AVAILABLE = False
-
-# Optional import (not critical)
-try:
-    from timestamp_sync import TimestampConverter, HighPrecisionTimer
-except ImportError:
-    HighPrecisionTimer = None
 
 # Configuration
 OUTPUT_DIR = 'data'
@@ -179,6 +197,7 @@ trigger_pulse_count = 0
 trigger_timestamps = []  # TTL pulse onset times (perf_counter)
 trigger_source = 'none'  # 'usb-io', 'arduino', or 'none'
 arduino_monitor = None  # Arduino monitor instance (for sync data)
+leap_listener = None  # Leap Motion listener instance (for sync data)
 
 class LatestFrameContainer:
     def __init__(self):
@@ -248,6 +267,8 @@ class RecordingListener(leap.Listener):
         self._frame_count = 0
         self._first_leap_time = None
         self._first_system_time = None
+        self._last_leap_time = None
+        self._last_system_time = None
 
     def on_connection_event(self, event):
         print("[LEAP] Connection event received")
@@ -269,6 +290,10 @@ class RecordingListener(leap.Listener):
             self._first_leap_time = event.timestamp
             self._first_system_time = system_time
             print(f"[LEAP] First frame received! system_time base: {system_time:.6f}")
+
+        # Always update last timestamps for sync point calculation
+        self._last_leap_time = event.timestamp
+        self._last_system_time = system_time
 
         # Debug: print every 90 frames (1 second at 90Hz)
         if self._frame_count % 90 == 0:
@@ -311,12 +336,21 @@ def writer_thread_func(filename):
         chunk_size = 1000
         dset_lts = f.create_dataset('leap_timestamp', (0,), maxshape=(None,),
                                     dtype='i8', chunks=(chunk_size,))
+        dset_lts.attrs['description'] = 'Leap Motion internal clock timestamp'
+        dset_lts.attrs['unit'] = 'microseconds'
+
         dset_sys_time = f.create_dataset('system_timestamp', (0,), maxshape=(None,),
                                          dtype='f8', chunks=(chunk_size,))
+        dset_sys_time.attrs['description'] = 'PC time when frame was received (includes USB latency)'
+        dset_sys_time.attrs['unit'] = 'seconds (perf_counter)'
+
         dset_task = f.create_dataset('task_status', (0,), maxshape=(None,),
                                      dtype='i1', chunks=(chunk_size,))
+        dset_task.attrs['description'] = 'Keyboard SPACE key status (1=pressed, 0=released)'
+
         dset_trigger = f.create_dataset('trigger_status', (0,), maxshape=(None,),
                                        dtype='i1', chunks=(chunk_size,))
+        dset_trigger.attrs['description'] = 'External TTL trigger status (1=active, 0=idle)'
 
         def create_hand_group(group_name):
             g = f.create_group(group_name)
@@ -425,17 +459,22 @@ def writer_thread_func(filename):
 
         # Save trigger onset times
         if trigger_timestamps:
-            f.create_dataset('trigger_onset_times', data=trigger_timestamps, dtype='f8')
+            dset_trig = f.create_dataset('trigger_onset_times', data=trigger_timestamps, dtype='f8')
+            dset_trig.attrs['description'] = 'PC time when trigger was received via serial (includes USB latency)'
+            dset_trig.attrs['unit'] = 'seconds (perf_counter)'
 
         # Save Arduino-specific data for post-processing
         if trigger_source == 'arduino' and arduino_monitor is not None:
             # Save raw Arduino timestamps for high-precision analysis
             if arduino_monitor.trigger_times_us:
-                f.create_dataset('arduino_trigger_times_us',
+                dset_ard = f.create_dataset('arduino_trigger_times_us',
                                 data=arduino_monitor.trigger_times_us, dtype='i8')
+                dset_ard.attrs['description'] = 'Raw Arduino micros() timestamp when trigger was detected'
+                dset_ard.attrs['unit'] = 'microseconds'
 
             # Save sync points for drift correction
             arduino_sync = f.create_group('arduino_sync')
+            arduino_sync.attrs['description'] = 'Synchronization points for Arduino-PC time alignment'
             if arduino_monitor.sync_start_arduino_us is not None:
                 arduino_sync.attrs['start_arduino_us'] = arduino_monitor.sync_start_arduino_us
                 arduino_sync.attrs['start_pc_time'] = arduino_monitor.sync_start_pc_time
@@ -448,10 +487,76 @@ def writer_thread_func(filename):
             try:
                 corrected_times = arduino_monitor.get_trigger_times_pc()
                 if corrected_times:
-                    f.create_dataset('trigger_onset_times_corrected',
+                    dset_trig_corr = f.create_dataset('trigger_onset_times_corrected',
                                     data=corrected_times, dtype='f8')
+                    dset_trig_corr.attrs['description'] = 'Arduino trigger times converted to PC time with drift correction (no USB latency)'
+                    dset_trig_corr.attrs['unit'] = 'seconds (perf_counter)'
+                    dset_trig_corr.attrs['note'] = 'Use this for accurate temporal alignment with leap_timestamp_corrected'
             except:
                 pass
+
+        # Save Leap Motion sync points for time alignment
+        if leap_listener is not None:
+            leap_sync = f.create_group('leap_sync')
+            leap_sync.attrs['description'] = 'Synchronization points for Leap Motion-PC time alignment'
+            # Save raw first/last frame info (for reference)
+            if leap_listener._first_leap_time is not None:
+                leap_sync.attrs['raw_start_leap_us'] = leap_listener._first_leap_time
+                leap_sync.attrs['raw_start_pc_time'] = leap_listener._first_system_time
+            if leap_listener._last_leap_time is not None:
+                leap_sync.attrs['end_leap_us'] = leap_listener._last_leap_time
+                leap_sync.attrs['end_pc_time'] = leap_listener._last_system_time
+                # Calculate drift using raw first frame (for diagnostics)
+                if leap_listener._first_leap_time is not None:
+                    leap_elapsed_us = leap_listener._last_leap_time - leap_listener._first_leap_time
+                    pc_elapsed_us = (leap_listener._last_system_time - leap_listener._first_system_time) * 1_000_000
+                    drift_us = leap_elapsed_us - pc_elapsed_us
+                    leap_sync.attrs['raw_drift_us'] = drift_us
+                    print(f"[LEAP] Raw sync drift: {drift_us:.1f} us over {leap_listener._last_system_time - leap_listener._first_system_time:.1f}s")
+
+            # Convert leap_timestamp to PC time and save as leap_timestamp_corrected
+            if (leap_listener._first_leap_time is not None and
+                leap_listener._last_leap_time is not None and
+                dset_lts.shape[0] > 0):
+                try:
+                    leap_timestamps = dset_lts[:]
+                    system_timestamps = dset_sys_time[:]
+
+                    # Find stable sync point (after initial buffer flush period)
+                    STABLE_DELAY_SEC = 2.0
+                    time_from_start_s = (leap_timestamps - leap_timestamps[0]) / 1_000_000
+                    stable_start_idx = np.searchsorted(time_from_start_s, STABLE_DELAY_SEC)
+
+                    # Ensure we have enough data after the stable point
+                    if stable_start_idx >= len(leap_timestamps) - 1:
+                        # Recording too short, fall back to first frame
+                        stable_start_idx = 0
+                        print(f"[LEAP] Warning: Recording shorter than {STABLE_DELAY_SEC}s, using first frame for sync")
+
+                    # Use stable point as sync start instead of first frame
+                    leap_start_us = leap_timestamps[stable_start_idx]
+                    pc_start = system_timestamps[stable_start_idx]
+                    leap_end_us = leap_listener._last_leap_time
+                    pc_end = leap_listener._last_system_time
+
+                    # Calculate scale factor for drift correction
+                    leap_duration_s = (leap_end_us - leap_start_us) / 1_000_000
+                    if leap_duration_s > 0:
+                        scale = (pc_end - pc_start) / leap_duration_s
+
+                        # Convert all leap timestamps to PC time
+                        # Frames before stable point are extrapolated backwards using the same scale
+                        leap_timestamps_corrected = pc_start + ((leap_timestamps - leap_start_us) / 1_000_000) * scale
+
+                        dset_leap_corr = f.create_dataset('leap_timestamp_corrected', data=leap_timestamps_corrected, dtype='f8')
+                        dset_leap_corr.attrs['description'] = 'Leap timestamp converted to PC time with drift correction (no USB latency)'
+                        dset_leap_corr.attrs['unit'] = 'seconds (perf_counter)'
+                        dset_leap_corr.attrs['note'] = 'Use this for accurate temporal alignment with trigger_onset_times_corrected'
+                        dset_leap_corr.attrs['stable_start_idx'] = stable_start_idx
+                        dset_leap_corr.attrs['stable_delay_sec'] = STABLE_DELAY_SEC
+                        print(f"[LEAP] Saved leap_timestamp_corrected ({len(leap_timestamps_corrected)} frames, sync from frame {stable_start_idx})")
+                except Exception as e:
+                    print(f"[LEAP] Failed to save corrected timestamps: {e}")
 
         # Save metadata
         f.attrs['total_frames_recorded'] = dset_lts.shape[0]
@@ -495,7 +600,7 @@ Examples:
 
 
 def main():
-    global is_recording, task_status, trigger_source, arduino_monitor
+    global is_recording, task_status, trigger_source, arduino_monitor, leap_listener
 
     # Parse arguments
     args = parse_args()
@@ -567,6 +672,7 @@ def main():
 
     # Start Leap Listener
     listener = RecordingListener()
+    leap_listener = listener  # Store reference for sync data access
     connection = leap.Connection()
     connection.add_listener(listener)
     print("[INIT] Leap Motion listener created")

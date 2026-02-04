@@ -258,7 +258,10 @@ class ArduinoTriggerMonitor:
                 try:
                     arduino_us = int(line.split(",")[1])
                     if arduino_us not in self.trigger_times_us:
+                        print(f"[DEBUG] _read_end_data adding NEW: {arduino_us}")
                         self.trigger_times_us.append(arduino_us)
+                    else:
+                        print(f"[DEBUG] _read_end_data SKIPPED duplicate: {arduino_us}")
                 except:
                     pass
             elif line.startswith("COUNT,"):
@@ -371,12 +374,20 @@ class ArduinoTriggerMonitor:
         if not self._running:
             return
 
-        # Perform end sync
-        self.sync_end()
+        print(f"[DEBUG] stop() called, trigger_times_us count: {len(self.trigger_times_us)}")
 
+        # Stop reader thread FIRST to avoid race condition with sync_end data
         self._stop_event.set()
         if self._reader_thread:
             self._reader_thread.join(timeout=2.0)
+
+        print(f"[DEBUG] reader thread stopped, trigger_times_us count: {len(self.trigger_times_us)}")
+
+        # THEN perform end sync (no competition for serial data)
+        self.sync_end()
+
+        print(f"[DEBUG] after sync_end(), trigger_times_us count: {len(self.trigger_times_us)}")
+
         self._running = False
 
     def is_running(self) -> bool:

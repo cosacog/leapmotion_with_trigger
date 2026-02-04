@@ -1,120 +1,90 @@
 # タイムスタンプ同期の仕組み
 
-## 問題
+## 概要
 
-Leap MotionハードウェアタイマーとUSB-IOパルス検出の時刻は、異なるクロックソースを使用しているため、直接比較できません。
+Leap Motion、Arduino、PCはそれぞれ独立したクロックを持っています。
+本システムでは、記録終了時に**線形補間によるドリフト補正**を行い、
+全てのタイムスタンプを同一のPC時間基準（`perf_counter`）に変換します。
 
-### 3つの異なるタイムスタンプ
+## 3つのクロックソース
 
-| ソース | 形式 | 基準点 | 精度 (Windows) |
-|--------|------|--------|---------------|
+| ソース | 形式 | 基準点 | 精度 |
+|--------|------|--------|------|
 | **Leap Motion** | マイクロ秒 (int64) | デバイス起動時 | ~1μs |
-| **USB-IO** | 秒 (float) | Pythonプロセス起動 / Unix epoch | 15.6ms (time.time)<br>100ns (perf_counter) |
-| **システム** | 秒 (float) | Unix epoch | 15.6ms (time.time)<br>100ns (perf_counter) |
+| **Arduino** | マイクロ秒 (int64) | Arduino起動時 | ~4μs |
+| **PC (perf_counter)** | 秒 (float64) | プロセス起動時 | ~100ns |
 
-### 同期しない場合の問題
+### 問題点
 
 ```python
-# 同期なし（間違った実装）
-leap_timestamp = 1500000  # Leap: デバイス起動から1.5秒
-usb_io_timestamp = 1737456789.123  # USB-IO: Unix epoch秒
+# 同期なし（間違った方法）
+leap_timestamp = 1500000      # Leap: デバイス起動から1.5秒
+arduino_timestamp = 2000000   # Arduino: Arduino起動から2.0秒
+pc_time = 123.456             # PC: perf_counter
 
 # これらは直接比較できない！
-# 基準点が異なるため、差分が無意味
-delta = usb_io_timestamp - (leap_timestamp / 1_000_000)  # 意味のない値
+# 基準点もクロック速度も異なる
 ```
 
-## 解決策
+## 解決策: 線形補間によるドリフト補正
 
-### 全てのタイムスタンプをシステム時刻（Unix epoch秒）に変換
+### 原理
+
+記録開始時と終了時にsyncポイントを取得し、線形補間で変換します。
 
 ```
-Leap Motion (μs)  →  変換  →  システム時刻 (秒)
-                       ↓
-                    オフセット計算
-                       ↓
-USB-IO (perf_counter) → 変換 → システム時刻 (秒)
+記録開始                                          記録終了
+    │                                                │
+    ▼                                                ▼
+sync_start                                      sync_end
+(device_us, pc_time)                       (device_us, pc_time)
+    │←───────────── 線形補間 ─────────────────────→│
 ```
 
-これにより、全てのイベントが**同じ時間軸**で記録され、正確な時刻対応が可能になります。
-
-## 実装
-
-### 1. 高精度タイマー (`HighPrecisionTimer`)
-
-`time.time()`の問題点:
-- Windows: 精度 ~15.6ms（粗い！）
-- システムクロック変更の影響を受ける
-
-**解決**: `time.perf_counter()`を使用
-- 精度: ~100ns (10,000倍高精度)
-- 単調増加（時刻調整の影響なし）
+### 変換式
 
 ```python
-class HighPrecisionTimer:
-    def __init__(self):
-        # 起動時に両方を記録
-        self._time_base = time.time()        # Unix epoch基準
-        self._perf_base = time.perf_counter()  # 高精度相対時刻
+# デバイス時刻（μs）をPC時間（秒）に変換
+def convert_to_pc_time(device_us):
+    # スケールファクター（ドリフト補正）
+    device_duration_s = (end_device_us - start_device_us) / 1_000_000
+    pc_duration_s = end_pc_time - start_pc_time
+    scale = pc_duration_s / device_duration_s
 
-    def now(self) -> float:
-        # perf_counterの経過時間をtime.time()ベースに変換
-        elapsed_perf = time.perf_counter() - self._perf_base
-        return self._time_base + elapsed_perf
+    # 変換
+    elapsed_s = (device_us - start_device_us) / 1_000_000
+    return start_pc_time + elapsed_s * scale
 ```
 
-**利点**:
-- 高精度（100ns）
-- Unix epoch互換（絶対時刻）
-- 単調増加
+## HDF5ファイル構造
 
-### 2. Leap Motion タイムスタンプ変換 (`TimestampConverter`)
+### タイムスタンプデータ
 
-Leap Motionのハードウェアタイムスタンプをシステム時刻に変換します。
+| データセット | 説明 | 単位 | 用途 |
+|-------------|------|------|------|
+| `leap_timestamp` | Leap内部クロック | μs (int64) | 生データ保存用 |
+| `system_timestamp` | PC受信時刻（USB遅延含む） | 秒 (float64) | 参考用 |
+| `leap_timestamp_corrected` | **PC時間に変換済み（ドリフト補正済み）** | 秒 (float64) | **解析に使用** |
+| `trigger_onset_times` | トリガー受信時刻（USB遅延含む） | 秒 (float64) | 参考用 |
+| `trigger_onset_times_corrected` | **PC時間に変換済み（ドリフト補正済み）** | 秒 (float64) | **解析に使用** |
+| `arduino_trigger_times_us` | Arduino内部クロック | μs (int64) | 生データ保存用 |
 
-#### ステップ1: 初期キャリブレーション
+### Syncグループ
 
-```python
-# 最初のLeap Motionフレーム受信時
-leap_timestamp_us = event.timestamp  # 例: 1500000 (デバイス起動から1.5秒)
-system_time = time.time()  # 例: 1737456789.123 (Unix epoch秒)
-
-# オフセットを計算
-offset_us = (system_time * 1_000_000) - leap_timestamp_us
-# offset_us = 1737456789123000 - 1500000 = 1737456787623000
 ```
+leap_sync/
+  ├── start_leap_us    # 最初のフレームのLeap timestamp
+  ├── start_pc_time    # 最初のフレームのPC time
+  ├── end_leap_us      # 最後のフレームのLeap timestamp
+  ├── end_pc_time      # 最後のフレームのPC time
+  └── drift_us         # クロックドリフト（μs）
 
-#### ステップ2: 変換
-
-```python
-# 以降のフレームで変換
-leap_timestamp_us = 2000000  # 2.0秒
-system_time = (leap_timestamp_us + offset_us) / 1_000_000
-# = (2000000 + 1737456787623000) / 1000000
-# = 1737456789.623 秒
-```
-
-#### ドリフト補正
-
-複数フレームで測定し、中央値でオフセットを更新:
-
-```python
-offset_samples = [offset1, offset2, offset3, ...]
-median_offset = sorted(offset_samples)[len//2]
-```
-
-### 3. USB-IO タイムスタンプ変換
-
-USB-IOは`time.perf_counter()`を使用して高精度でパルスを検出します。
-
-```python
-# USB-IO monitor内（高精度）
-pulse_time = time.perf_counter()  # 例: 123.456789
-
-# コールバックで受信
-def on_trigger_edge(edge_type, timestamp, pulse_width):
-    # perf_counterをUnix epoch秒に変換
-    system_time = high_precision_timer.perf_to_time(timestamp)
+arduino_sync/
+  ├── start_arduino_us # 記録開始時のArduino micros()
+  ├── start_pc_time    # 記録開始時のPC time
+  ├── end_arduino_us   # 記録終了時のArduino micros()
+  ├── end_pc_time      # 記録終了時のPC time
+  └── drift_us         # クロックドリフト（μs）
 ```
 
 ## データフロー
@@ -122,275 +92,228 @@ def on_trigger_edge(edge_type, timestamp, pulse_width):
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │ Leap Motion Device                                          │
-│  Hardware Timer: 1,500,000 μs (1.5秒経過)                  │
+│  Hardware Timer: event.timestamp (μs)                       │
 └────────────────────┬────────────────────────────────────────┘
-                     │
-                     ▼
-          ┌──────────────────────┐
-          │ TimestampConverter   │
-          │ calibrate(1500000)   │
-          │  ↓                   │
-          │ offset = system_us   │
-          │          - 1500000   │
-          └──────────┬───────────┘
-                     │
-                     ▼
-          ┌──────────────────────┐
-          │ leap_to_system()     │
-          │  = (leap + offset)   │
-          │    / 1,000,000       │
-          └──────────┬───────────┘
-                     │
-                     ▼
-        system_timestamp (秒, Unix epoch)
-                     │
-                     ▼
-┌────────────────────────────────────────────────────────────┐
-│ HDF5 File: system_timestamp[n] = 1737456789.623           │
-└────────────────────────────────────────────────────────────┘
-
-
-┌─────────────────────────────────────────────────────────────┐
-│ USB-IO Device                                               │
-│  Pulse detected!                                            │
-└────────────────────┬────────────────────────────────────────┘
-                     │
-                     ▼
-          ┌──────────────────────┐
-          │ USB-IO Monitor       │
-          │ time.perf_counter()  │
-          │  = 123.456789        │
-          └──────────┬───────────┘
-                     │
-                     ▼
-          ┌──────────────────────┐
-          │ HighPrecisionTimer   │
-          │ perf_to_time()       │
-          │  = base + elapsed    │
-          └──────────┬───────────┘
-                     │
-                     ▼
-        system_timestamp (秒, Unix epoch)
                      │
                      ▼
           ┌──────────────────────┐
           │ RecordingListener    │
-          │ trigger_status更新   │
+          │ • leap_timestamp     │ ← 生データ保存
+          │ • system_timestamp   │ ← PC受信時刻
+          │ • sync points記録    │
+          └──────────┬───────────┘
+                     │
+                     ▼ (記録終了時)
+          ┌──────────────────────┐
+          │ 線形補間変換         │
+          │ leap_timestamp       │
+          │   → corrected        │
           └──────────┬───────────┘
                      │
                      ▼
 ┌────────────────────────────────────────────────────────────┐
-│ HDF5 File: trigger_status[n] = 1                           │
-│            system_timestamp[n] = 1737456789.623            │
+│ HDF5: leap_timestamp_corrected (PC time base)              │
+└────────────────────────────────────────────────────────────┘
+
+
+┌─────────────────────────────────────────────────────────────┐
+│ Arduino (Hardware Interrupt)                                │
+│  micros() timestamp when TTL pulse detected                 │
+└────────────────────┬────────────────────────────────────────┘
+                     │
+                     ▼
+          ┌──────────────────────┐
+          │ ArduinoTriggerMonitor│
+          │ • trigger_times_us   │ ← 生データ保存
+          │ • trigger_times_pc   │ ← PC受信時刻
+          │ • sync points記録    │
+          └──────────┬───────────┘
+                     │
+                     ▼ (記録終了時)
+          ┌──────────────────────┐
+          │ 線形補間変換         │
+          │ arduino_trigger_us   │
+          │   → corrected        │
+          └──────────┬───────────┘
+                     │
+                     ▼
+┌────────────────────────────────────────────────────────────┐
+│ HDF5: trigger_onset_times_corrected (PC time base)         │
 └────────────────────────────────────────────────────────────┘
 ```
 
-## HDF5ファイル構造
+## 使用例
 
-```python
-with h5py.File('recording.h5', 'r') as f:
-    # 同期されたタイムスタンプ（全て同じ基準）
-    system_timestamp = f['system_timestamp'][:]  # 秒 (Unix epoch)
-
-    # オリジナルのLeapタイムスタンプ（参考用）
-    leap_timestamp = f['leap_timestamp'][:]  # マイクロ秒 (デバイス起動基準)
-
-    # イベント状態
-    trigger_status = f['trigger_status'][:]  # 0=IDLE, 1=ACTIVE
-    task_status = f['task_status'][:]  # 0=OFF, 1=ON
-
-    # メタデータ
-    offset_us = f.attrs['timestamp_offset_us']  # Leap→システム変換オフセット
-    offset_ms = f.attrs['timestamp_offset_ms']
-    drift_ms = f.attrs.get('timestamp_drift_ms', 0)  # クロックドリフト
-```
-
-### 使用例: トリガーとLeapフレームの対応
+### 基本的な使い方
 
 ```python
 import h5py
 import numpy as np
 
+with h5py.File('data/leap_recording_trigger_xxx.h5', 'r') as f:
+    # ドリフト補正済みタイムスタンプを使用（推奨）
+    leap_time = f['leap_timestamp_corrected'][:]
+    trigger_time = f['trigger_onset_times_corrected'][:]
+
+    # 手の位置データ
+    right_palm = f['right_hand/palm_pos'][:]
+
+    # 各トリガーに最も近いフレームを検索
+    for i, t in enumerate(trigger_time):
+        frame_idx = np.argmin(np.abs(leap_time - t))
+        print(f"Trigger #{i+1}: {t:.6f}s -> Frame {frame_idx}")
+        print(f"  Palm position: {right_palm[frame_idx]}")
+```
+
+### トリガー前後のデータ抽出
+
+```python
+def extract_around_trigger(leap_time, data, trigger_time, window_ms=100):
+    """トリガー前後のデータを抽出"""
+    window_s = window_ms / 1000
+    results = []
+
+    for t in trigger_time:
+        mask = (leap_time >= t - window_s) & (leap_time <= t + window_s)
+        indices = np.where(mask)[0]
+
+        # 相対時刻（トリガーを0とする）
+        rel_time = (leap_time[indices] - t) * 1000  # ms
+
+        results.append({
+            'trigger_time': t,
+            'relative_time_ms': rel_time,
+            'data': data[indices],
+            'frame_indices': indices
+        })
+
+    return results
+
+# 使用例
 with h5py.File('recording.h5', 'r') as f:
-    sys_time = f['system_timestamp'][:]
-    trigger = f['trigger_status'][:]
+    leap_time = f['leap_timestamp_corrected'][:]
+    trigger_time = f['trigger_onset_times_corrected'][:]
+    palm_pos = f['right_hand/palm_pos'][:]
 
-    # トリガーがACTIVEになった時刻
-    trigger_active = np.where(np.diff(trigger) == 1)[0] + 1
-    trigger_times = sys_time[trigger_active]
+    segments = extract_around_trigger(leap_time, palm_pos, trigger_time)
 
-    print(f"トリガー検出時刻:")
-    for i, t in enumerate(trigger_times):
-        print(f"  Pulse #{i+1}: {t:.6f} 秒 (Unix epoch)")
+    for i, seg in enumerate(segments):
+        print(f"Trigger #{i+1} at {seg['trigger_time']:.3f}s")
+        print(f"  Frames: {len(seg['frame_indices'])}")
+        print(f"  Time range: {seg['relative_time_ms'][0]:.1f} to {seg['relative_time_ms'][-1]:.1f} ms")
+```
 
-    # 最初のトリガーから±10msのフレームを抽出
-    first_trigger = trigger_times[0]
-    mask = np.abs(sys_time - first_trigger) < 0.01  # ±10ms
-    nearby_frames = np.where(mask)[0]
+### データセット属性の確認
 
-    print(f"\n最初のトリガー ({first_trigger:.6f}) 付近のフレーム:")
-    for idx in nearby_frames:
-        delta_ms = (sys_time[idx] - first_trigger) * 1000
-        print(f"  Frame {idx}: {delta_ms:+.3f} ms")
+```python
+with h5py.File('recording.h5', 'r') as f:
+    # データセットの説明を表示
+    for name in ['leap_timestamp', 'leap_timestamp_corrected',
+                 'trigger_onset_times', 'trigger_onset_times_corrected']:
+        if name in f:
+            dset = f[name]
+            print(f"{name}:")
+            print(f"  Description: {dset.attrs.get('description', 'N/A')}")
+            print(f"  Unit: {dset.attrs.get('unit', 'N/A')}")
+            print(f"  Note: {dset.attrs.get('note', 'N/A')}")
+            print()
 ```
 
 ## タイミング精度
 
-### 理論値
+### 各コンポーネントの精度
 
 | 要素 | 精度 |
 |------|------|
 | Leap Motionハードウェアタイマー | ~1μs |
-| `time.perf_counter()` (Windows) | ~100ns |
-| USB-IOポーリング間隔 | 100μs |
-| USB通信遅延 | 1-5ms |
+| Arduino micros() | ~4μs |
+| PC perf_counter (Windows) | ~100ns |
+| USB通信遅延 | 2-8ms（変動あり） |
 
-### 実測値
+### 補正後の精度
 
-| 測定項目 | 精度 |
-|---------|------|
-| Leap→システム変換 | ±0.1ms |
-| USB-IO→システム変換 | ±0.1ms |
-| パルス幅測定 | ±0.2ms |
-| Leap-USBIOイベント対応 | ±0.5ms |
+| 測定項目 | 補正前 | 補正後 |
+|---------|--------|--------|
+| Leap-Arduino時刻対応 | 2-8ms（USB遅延） | <1ms |
+| クロックドリフト | 累積 | 補正済み |
+| フレーム間タイミング | 正確 | 正確 |
 
-### 誤差要因
+### USB遅延の影響
 
-1. **初期キャリブレーション誤差**: ±0.1ms
-   - Leapフレーム受信とsystem_time取得の間の遅延
-
-2. **クロックドリフト**: <0.5ms/時間
-   - ハードウェアクロックの周波数差
-   - ドリフト補正で<0.1msに抑制
-
-3. **USB通信ジッター**: ±1-3ms
-   - USB-IOポーリングとLeapフレーム受信の遅延変動
-   - 統計的に十分多数のサンプルで平均化
-
-## time.time() vs time.perf_counter()
-
-### time.time()の問題
-
-```python
-# Windows: 精度 ~15.6ms
-t1 = time.time()  # 1737456789.123
-time.sleep(0.001)  # 1ms待機
-t2 = time.time()  # 1737456789.123 ← 変わらない！
-
-delta = t2 - t1  # 0.0 (本当は0.001のはず)
+```
+TTLパルス発生
+    │
+    ▼ ← Arduino割り込み（μs精度）★ trigger_onset_times_corrected の基準
+    │
+    │  [USB転送遅延: 2-8ms]
+    │
+    ▼
+PC受信 ← trigger_onset_times に記録（USB遅延を含む）
 ```
 
-**問題点**:
-- 精度が粗い（~15.6ms）
-- システムクロック変更の影響を受ける
-- NTP同期で時刻が飛ぶ
-
-### time.perf_counter()の利点
-
-```python
-# 精度 ~100ns
-t1 = time.perf_counter()  # 123.456789012
-time.sleep(0.001)  # 1ms待機
-t2 = time.perf_counter()  # 123.457789012
-
-delta = t2 - t1  # 0.001 ← 正確！
-```
-
-**利点**:
-- 高精度（~100ns）
-- 単調増加（時刻調整の影響なし）
-- 短時間測定に最適
-
-### ハイブリッドアプローチ
-
-**本実装の戦略**:
-1. `time.perf_counter()`で高精度測定
-2. `time.time()`で絶対時刻基準を取得
-3. 両者を組み合わせて「高精度 + Unix epoch互換」を実現
-
-```python
-class HighPrecisionTimer:
-    def __init__(self):
-        self._time_base = time.time()        # 絶対時刻基準
-        self._perf_base = time.perf_counter()  # 高精度相対時刻
-
-    def now(self):
-        # 高精度の経過時間を絶対時刻に加算
-        elapsed = time.perf_counter() - self._perf_base
-        return self._time_base + elapsed
-```
+`*_corrected` データを使用することで、USB遅延の影響を排除できます。
 
 ## トラブルシューティング
 
-### Q: Leap MotionとUSB-IOの時刻がずれている
+### Q: leap_timestamp_corrected と trigger_onset_times_corrected の差が数ms以上ある
 
-**A**: 正常です。初期キャリブレーション時の誤差（±0.1ms程度）です。
+**A**: 正常な範囲です。以下を確認してください：
 
-確認方法:
 ```python
-offset_ms = f.attrs['timestamp_offset_ms']
-print(f"Offset: {offset_ms:.3f} ms")
+with h5py.File('recording.h5', 'r') as f:
+    # ドリフト量を確認
+    leap_drift = f['leap_sync'].attrs.get('drift_us', 0)
+    arduino_drift = f['arduino_sync'].attrs.get('drift_us', 0)
+
+    print(f"Leap drift: {leap_drift:.1f} μs")
+    print(f"Arduino drift: {arduino_drift:.1f} μs")
 ```
 
-### Q: 時間が経つとドリフトする
+### Q: トリガー数が実際より多い/少ない
 
-**A**: クロックドリフトが発生しています。
+**A**: 以下を確認してください：
 
-確認方法:
+1. Arduinoのデバウンス設定（デフォルト: 1ms）
+2. レースコンディションの修正が適用されているか
+
 ```python
-drift_ms = f.attrs.get('timestamp_drift_ms', 0)
-print(f"Clock drift: {drift_ms:.3f} ms")
+with h5py.File('recording.h5', 'r') as f:
+    print(f"Trigger count: {f.attrs['trigger_pulses']}")
+    print(f"Trigger source: {f.attrs['trigger_source']}")
 ```
 
-対策:
-- 記録時間を短くする（<1時間）
-- 再キャリブレーション（現在未実装）
+### Q: 記録開始/終了時のタイムスタンプが不安定
 
-### Q: USB-IOパルスとLeapフレームが1フレーム（~10ms）ずれる
+**A**: Leap Motionの初期化/終了処理による影響です。
+解析時は最初と最後の数秒を除外することを推奨します。
 
-**A**: フレームサンプリングのタイミング差です。
-
-Leap Motionは90Hz（11.1msごと）でサンプリングします。
-USB-IOパルスが来た時刻とLeapフレームの時刻は最大5.5msずれます。
-
+```python
+# 最初と最後の5秒を除外
+stable_mask = (leap_time > leap_time[0] + 5) & (leap_time < leap_time[-1] - 5)
+stable_data = data[stable_mask]
 ```
-USB-IO: ──────●────────────── (パルス検出)
-Leap  : ──┬──────┬──────┬──── (11.1ms間隔)
-          ↑      ↑      ↑
-        Frame  Frame  Frame
-
-最悪ケース: 5.5ms のずれ
-```
-
-**解決**: `system_timestamp`を使って正確な時刻で補間します。
 
 ## まとめ
 
-### 同期の仕組み
+### 解析に使用すべきデータ
 
-✅ **Leap Motion**: ハードウェアタイマー → オフセット補正 → システム時刻
-✅ **USB-IO**: perf_counter → HighPrecisionTimer → システム時刻
-✅ **結果**: 全イベントが同一時間軸（Unix epoch秒）で記録
+| 用途 | 使用するデータ |
+|------|---------------|
+| フレームのタイミング | `leap_timestamp_corrected` |
+| トリガーのタイミング | `trigger_onset_times_corrected` |
+| フレーム-トリガー対応 | 両方の `_corrected` データを使用 |
 
-### 精度
+### 参考用データ
 
-- **タイムスタンプ精度**: ±0.1ms
-- **イベント対応精度**: ±0.5ms
-- **パルス幅測定**: ±0.2ms
+| データ | 用途 |
+|--------|------|
+| `leap_timestamp` | Leap内部クロックの生データ |
+| `system_timestamp` | USB遅延を含むPC受信時刻 |
+| `trigger_onset_times` | USB遅延を含むトリガー受信時刻 |
+| `arduino_trigger_times_us` | Arduino内部クロックの生データ |
 
-### データ解析
+### 精度保証
 
-```python
-# HDF5から読み込み
-system_timestamp  # 全てこれを使う（同期済み）
-leap_timestamp    # 参考用（オリジナル）
-trigger_status    # USB-IOトリガー状態
-task_status       # キーボード状態
-
-# メタデータ
-timestamp_offset_us   # 変換オフセット
-timestamp_drift_ms    # クロックドリフト
-```
-
-全てのイベントが**統一された時間軸**で記録されているため、
-正確な時刻対応と解析が可能です！
+- **`_corrected` データ同士の比較**: <1ms精度
+- **クロックドリフト**: 線形補間で補正済み
+- **USB遅延**: `_corrected` データでは排除済み

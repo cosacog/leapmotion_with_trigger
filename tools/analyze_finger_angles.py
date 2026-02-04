@@ -372,7 +372,9 @@ def extract_trigger_aligned_angles(h5_filepath, hand_type='left', finger_idx=1,
 
         # Load data
         system_timestamp = f['system_timestamp'][:]
-        trigger_onset_times = f['trigger_onset_times'][:]
+        # trigger_onset_times = f['trigger_onset_times'][:]
+        # trigger_onset_times = f['trigger_onset_times_corrected'][:]
+        trigger_onset_times = f['trigger_onset_times_corrected'][:]
         n_triggers = len(trigger_onset_times)
 
         print(f"Found {n_triggers} triggers")
