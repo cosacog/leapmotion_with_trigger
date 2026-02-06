@@ -70,6 +70,11 @@ python run_record_with_trigger.py
 python record_with_trigger.py
 ```
 
+もしarduinoを利用する時は
+```bash
+python record_with_trigger.py --trigger arduino
+```
+
 **操作方法:**
 - **SPACEキー**: タスクステータス = 1をマーク (手動イベントマーキング用)
 - **'q'またはESCまたはCtrl+C**: 記録を停止
@@ -100,7 +105,7 @@ USB-IOデバイスの接続とエッジ検出をテストします。
 - **タイムスタンプ精度**: 約100ナノ秒 (Windows)
 - **HDF5保存間隔**: 0.5秒
 - **フレームキューサイズ**: 10,000フレーム
-- **USB-IOピン**: J2-0 (`src/record_with_trigger.py`で設定可能)
+- **USB-IOピン**: J2-0 とGNDをBNCに接続することを想定しています(`src/record_with_trigger.py`で設定可能)
 
 ## アーキテクチャ
 
