@@ -44,3 +44,6 @@ data/
 
 # CI/CD files from upstream (Ultraleap official repository)
 .gitlab-ci.yml
+
+Thumbs.db
+.DS_Store
