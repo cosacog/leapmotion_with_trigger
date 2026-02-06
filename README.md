@@ -1,18 +1,21 @@
-# Leap Motion Hand Tracking with USB-IO Integration
+# Leap Motion Hand Tracking with External Trigger Integration
 
-USB-IO 2.0トリガーデバイスと統合したLeap Motionハンドトラッキングシステムで、同期データ記録を実現します。
+外部トリガーデバイス（USB-IO 2.0 または Arduino）と統合したLeap Motionハンドトラッキングシステムで、同期データ記録を実現します。
 
 ## プロジェクト概要
 
-このプロジェクトは、Leap MotionハンドトラッキングとUSB-IO 2.0デバイスを組み合わせ、高精度なタイムスタンプ同期を実現します。外部トリガー信号と共にハンドトラッキングデータを記録し、実験セットアップにおける同期データ収集を可能にします。
+このプロジェクトは、Leap Motionハンドトラッキングと外部トリガーデバイスを組み合わせ、高精度なタイムスタンプ同期を実現します。トリガーソースとしてUSB-IO 2.0（ポーリング方式）またはArduino Nano（ハードウェア割り込み方式）を選択でき、外部トリガー信号と共にハンドトラッキングデータを記録し、実験セットアップにおける同期データ収集を可能にします。
 
 ## 主な機能
 
 - **高精度タイムスタンプ同期** (`time.perf_counter()`による約100nsの分解能)
-- **イベント駆動型USB-IOモニタリング** (エッジ検出コールバック付き)
-- **スレッドセーフな実装** (4つの並行スレッド):
+- **複数のトリガーソース対応**:
+  - **USB-IO 2.0**: USB HIDポーリングによるエッジ検出（約1~3ms精度）
+  - **Arduino Nano**: ハードウェア割り込み（`micros()`によるμs精度）
+  - **なし**: トリガーなしでLeap Motionのみ記録
+- **スレッドセーフな実装** (最大4つの並行スレッド):
   - Leap Motionリスナースレッド
-  - USB-IOモニタースレッド
+  - トリガーモニタースレッド（USB-IOまたはArduinoシリアルリーダー）
   - HDF5ライタースレッド
   - メイン可視化スレッド
 - **OpenCVによるリアルタイム可視化**
@@ -32,8 +35,15 @@ USB-IO 2.0トリガーデバイスと統合したLeap Motionハンドトラッ�
    - OSの選択 -> Ultraleap Hyperion (作成時 v 6.2.0)
    - デフォルトの場所にインストールするか、`LEAPSDK_INSTALL_LOCATION`環境変数を設定
 
-2. **USB-IO 2.0デバイス** (オプション、トリガー機能用)
+2. **USB-IO 2.0デバイス** (オプション、トリガーソースの一つ)
    - Windowsではドライバー不要 (と思います)
+
+3. **Arduino Nano** (オプション、トリガーソースの一つ)
+   - Arduino Nano互換品で動作確認済み（CH340チップ搭載品など）
+   - CH340ドライバーが必要な場合あり
+   - `arduino/ttl_trigger/ttl_trigger.ino` スケッチを書き込み
+   - 配線: Pin 2 (D2) にTTL信号、GNDにグランド接続
+   - pyserialが必要（`pip install pyserial`）
 
 ### セットアップ：ai作成のドキュメントで間違いがあるかも知れません
 
@@ -85,9 +95,16 @@ python record_with_trigger.py --trigger arduino
 - HDF5ファイルの内容:
   - `leap_timestamp`: オリジナルのLeapタイムスタンプ (マイクロ秒)
   - `system_timestamp`: 同期されたシステム時刻 (秒、perf_counterベース)
+  - `leap_timestamp_corrected`: Leapタイムスタンプをドリフト補正してPC時刻に変換 (秒、perf_counterベース)
   - `task_status`: SPACEキーの状態 (0/1)
-  - `trigger_status`: USB-IOトリガーの状態 (0/1)
-  - `right/left`: ハンドトラッキングデータ (手のひら、手首、肘、指)
+  - `trigger_status`: トリガーの状態 (0/1)
+  - `trigger_onset_times`: トリガーパルス開始時刻 (秒、perf_counterベース)
+  - `right_hand/`, `left_hand/`: ハンドトラッキングデータ (手のひら、手首、肘、指)
+  - `leap_sync/`: Leap Motionクロック同期ポイント
+  - Arduinoトリガー使用時の追加フィールド:
+    - `arduino_trigger_times_us`: Arduinoの`micros()`による生タイムスタンプ (マイクロ秒)
+    - `trigger_onset_times_corrected`: Arduinoタイムスタンプをドリフト補正してPC時刻に変換 (秒、perf_counterベース)
+    - `arduino_sync/`: Arduino-PC間のクロック同期ポイント
 
 ### USB-IOモニターのテスト
 
@@ -100,26 +117,31 @@ USB-IOデバイスの接続とエッジ検出をテストします。
 
 ## 技術仕様
 
-- **Leap Motionサンプリングレート**: 90 Hz
-- **USB-IOポーリング間隔**: 100 μs (0.0001秒)
-- **タイムスタンプ精度**: 約100ナノ秒 (Windows)
+- **Leap Motionサンプリングレート**: デバイスネイティブ（約100 Hz）
+- **USB-IOポーリング間隔**: 約1~3 ms（USB HID Full Speedの1msフレーム間隔が律速。コード上のsleep設定は100μsだが実効値はUSB通信時間に支配される）
+- **タイムスタンプ精度**: 約100ナノ秒 (Windows): 下記タイムスタンプ同期を参照ください。
 - **HDF5保存間隔**: 0.5秒
 - **フレームキューサイズ**: 10,000フレーム
-- **USB-IOピン**: J2-0 とGNDをBNCに接続することを想定しています(`src/record_with_trigger.py`で設定可能)
+- **USB-IOピン**: J2-0 とGNDをBNCに接続することを想定しています (`src/record_with_trigger.py`で設定可能)
+- **arduino**: arduino nanoの互換品で動作を見ました。D2とGNDにBNCで接続することを想定しています。
 
 ## アーキテクチャ
 
 ### タイムスタンプ同期
 
-すべてのタイムスタンプは`time.perf_counter()`を共通ベースとして使用:
+すべてのタイムスタンプは`time.perf_counter()`を共通ベース(システム時刻)として使用:
 - **Leap Motion**: ハードウェアタイマーをシステム時刻に変換
-- **USB-IO**: 直接perf_counterタイムスタンプを使用
-- **精度**: Windowsで約100ns (`time.time()`の15.6msと比較)
+- **USB-IO**: 直接perf_counterタイムスタンプを使用. 注意としてUSB-IOへの通信で+- 3 ms程度ジッターがあるようです。USB2.0 (full speed)の制約で約1 ms間隔でサンプリングする限界とUSB通信が割り込みされるなどの状況が関係しているようです。
+- **arduino**: arduinoのタイムスタンプをシステム時刻に変換
+- **精度**: Windowsで約100ns
+- **注意点**: PCとleap motion, arduinoは5分で100 ms単位のドリフトがあるようです。hdf5ファイルのleap_timestamp_corrected, arduino
 
 ### スレッドモデル
 
 1. **Leap Listenerスレッド**: ハンドトラッキングイベントをキャプチャ
-2. **USB-IO Monitorスレッド**: 100μs間隔でUSB-IOデバイスをポーリング
+2. **トリガーモニタースレッド** (トリガーソースに応じて1つ):
+   - USB-IO: USB HIDラウンドトリップ（約1~3ms）間隔でポーリング
+   - Arduino: シリアルポートからのデータ受信待ち（115200 baud）
 3. **Writerスレッド**: 0.5秒ごとにバッファされたデータをHDF5に保存
 4. **Mainスレッド**: OpenCV可視化とユーザー入力を処理
 
@@ -127,7 +149,7 @@ USB-IOデバイスの接続とエッジ検出をテストします。
 
 - `LatestFrameContainer`: `threading.Lock()`を使用した安全なフレーム共有
 - `queue.Queue`: Leap listenerとwriter間のスレッドセーフバッファ
-- USB-IOモニターと他のスレッド間に共有状態なし (コールバックベース)
+- トリガーモニターと他のスレッド間に共有状態なし (コールバックベース)
 
 ## 開発
 
@@ -161,6 +183,26 @@ python test_usb_io_monitor.py
 - USB-IOデバイスの接続を確認
 - USB-IOドライバーをインストール
 - プログラムはトリガー機能なしで続行します
+
+### 問題: Arduinoが接続できない
+
+**症状**: "Failed to connect to Arduino" または "No Arduino found"
+
+**解決策**:
+- CH340ドライバーがインストールされているか確認
+- デバイスマネージャーでCOMポート番号を確認し、`--port COM9` のように指定
+- Arduino IDEのシリアルモニタが開いていないか確認（ポートの競合）
+- `arduino/ttl_trigger/ttl_trigger.ino` がArduinoに書き込まれているか確認
+
+### 問題: Arduinoのトリガーが記録されない
+
+**症状**: トリガー信号を送っているがカウントが増えない
+
+**解決策**:
+- TTL信号がPin 2 (D2)に接続されているか確認
+- GNDが共通接続されているか確認
+- TTL信号が3.3V以上のHIGHレベルであるか確認
+- デバウンス設定（デフォルト1ms）より短いパルスは無視される
 
 ### 問題: Leap Motionが検出されない
 

@@ -214,7 +214,6 @@ class LatestFrameContainer:
 
 latest_frame_container = LatestFrameContainer()
 data_queue = queue.Queue(maxsize=QUEUE_SIZE)
-high_precision_timer = None  # High precision timer for USB-IO
 
 # USB-IO Edge Detection Callback
 def on_usb_io_trigger_edge(edge_type: str, timestamp: float, pulse_width: float):
