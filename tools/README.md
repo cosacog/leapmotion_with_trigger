@@ -109,3 +109,13 @@ Both tools require the same dependencies as the main recording application:
 ## Related Documentation
 
 See `docs/RECORDING_IMPROVEMENTS.md` for technical details about frame drop prevention and detection strategies used in the recording system.
+
+### `analyze_hdf_data.py`
+
+- hdfデータから指の角度を変化を取り出し、トリガー(TMSを想定)前後での動きを評価する
+- analyze_finger_angles.pyをインポート
+
+### `analyze_finger_angles.py`
+
+- MCP関節の屈曲/伸展、内/外転の評価
+- Palm orientationをleapmotion内で評価しているので、それを基準に屈曲/伸展、内外転の平面を決定

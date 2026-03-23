@@ -49,20 +49,24 @@
 
 ```bash
 # リポジトリのクローン
-git clone <repository-url>
-cd leapmotion_handtracking
+git clone https://github.com/cosacog/leapmotion_with_trigger
+cd leapmotion_with_trigger
 
-# 仮想環境の作成と有効化
-python -m venv venv
-venv\Scripts\activate  # Windows
-# source venv/bin/activate  # Linux/Mac
+# 仮想環境の作成と依存関係のインストール（Python 3.8 が必要）
+uv python install 3.8   # Python 3.8 が未インストールの場合
+uv venv --python 3.8
+uv pip install -r requirements.txt
 
-# 依存関係のインストール
-pip install -r requirements.txt
-
-# Leap Python APIのインストール
-pip install -e leapc-python-api
+# Leap Python APIのインストール（leapc-cffi は C拡張のビルドが必要）
+uv pip install -e leapc-cffi
+uv pip install -e leapc-python-api
 ```
+
+注意点:
+
+- Ultraleap SDK の確認 — C:\Program Files\Ultraleap\LeapSDK または LEAPSDK_INSTALL_LOCATION 環境変数のパスをチェック。見つからない場合は警告して継続可否を確認
+- leapc-cffi のビルドに Visual Studio Build Tools（「C++ によるデスクトップ開発」ワークロード）が必要です。未インストールの場合はエラーメッセージが出ます
+- Ultraleap SDK がデフォルト以外の場所にある場合は、事前に環境変数を設定してください:
 
 ## 使い方
 
@@ -70,19 +74,22 @@ pip install -e leapc-python-api
 
 プロジェクトルートディレクトリから実行:
 
-```bash
+```cmd
+.venv\Scripts\activate
 python run_record_with_trigger.py
 ```
 
-もしくは srcディレクトリに移動(cd src)して以下実行：
+もしくは src ディレクトリのスクリプトを直接実行：
 
-```bash
-python record_with_trigger.py
+```cmd
+.venv\Scripts\activate
+python src\record_with_trigger.py
 ```
 
 もしarduinoを利用する時は
-```bash
-python record_with_trigger.py --trigger arduino
+
+```cmd
+python src\record_with_trigger.py --trigger arduino
 ```
 
 **操作方法:**

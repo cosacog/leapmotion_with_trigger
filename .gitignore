@@ -28,8 +28,10 @@ usb_io2_0_push_button_sample_port_j2_3.py
 
 examples/visualizer.py
 leapc-cffi/src/scripts/cffi_build.py
+tools/mep_measure.py
 
 .gitignore
+setup_env.bat
 
 *.pyc
 *.pyd

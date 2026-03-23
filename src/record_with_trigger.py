@@ -83,6 +83,7 @@ USB_IO_POLL_INTERVAL = 0.0001  # 100μs
 class HandData:
     def __init__(self):
         self.valid = False
+        self.hand_type_str = ""  # DEBUG: raw hand type from Leap API
         self.palm_pos = [0.0, 0.0, 0.0]
         self.palm_ori = [0.0, 0.0, 0.0, 0.0]
         self.wrist_pos = [0.0, 0.0, 0.0]
@@ -167,6 +168,14 @@ class LiveCanvas:
 
         cv2.putText(self.output_image, label, (sx_wrist - 10, sy_wrist - 10),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1)
+
+        # DEBUG: show raw hand type from Leap API
+        if hand_data.hand_type_str:
+            debug_x = 10 if label == "L" else self.screen_size[1] // 2
+            debug_y = self.screen_size[0] - 20
+            debug_text = f"{label}: {hand_data.hand_type_str}"
+            cv2.putText(self.output_image, debug_text, (debug_x, debug_y),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
 
         fingers = hand_data.fingers
 
@@ -303,6 +312,7 @@ class RecordingListener(leap.Listener):
         for hand in event.hands:
             h_data = frame_data.left if str(hand.type) == "HandType.Left" else frame_data.right
             h_data.valid = True
+            h_data.hand_type_str = str(hand.type)
             h_data.palm_pos = [hand.palm.position.x, hand.palm.position.y, hand.palm.position.z]
             h_data.palm_ori = [hand.palm.orientation.x, hand.palm.orientation.y,
                               hand.palm.orientation.z, hand.palm.orientation.w]
@@ -655,8 +665,7 @@ def main():
         )
 
         if not arduino_monitor.connect(args.port):
-            print("[INIT] Warning: Failed to connect to Arduino. Continuing without trigger...")
-            arduino_monitor = None
+            raise RuntimeError("Failed to connect to Arduino. Check connection and COM port.")
         else:
             arduino_monitor.start()
             print("[INIT] Arduino trigger monitor started")

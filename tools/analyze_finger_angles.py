@@ -336,7 +336,8 @@ def _save_results(results, source_filepath, hand_type, output_format):
 
 
 def extract_trigger_aligned_angles(h5_filepath, hand_type='left', finger_idx=1,
-                                    pre_time=0.1, post_time=0.2):
+                                    pre_time=0.1, post_time=0.2,
+                                    baseline_correction=False):
     """
     trigger_onset_timesを基準に角度データを切り出す
 
@@ -346,6 +347,7 @@ def extract_trigger_aligned_angles(h5_filepath, hand_type='left', finger_idx=1,
         finger_idx: 指のインデックス (0=Thumb, 1=Index, 2=Middle, 3=Ring, 4=Pinky)
         pre_time: トリガー前の時間（秒、正の値）デフォルト0.1秒
         post_time: トリガー後の時間（秒）デフォルト0.2秒
+        baseline_correction: Trueの場合、time_axis < 0 の区間の平均値を各試行から差し引く
 
     Returns:
         dict: {
@@ -458,6 +460,17 @@ def extract_trigger_aligned_angles(h5_filepath, hand_type='left', finger_idx=1,
 
         print(f"\nExtraction complete!")
         print(f"  Valid epochs: {np.sum(np.any(valid_mask, axis=1))}/{n_triggers}")
+
+        # Baseline correction: subtract mean of pre-trigger (time_axis < 0) period
+        if baseline_correction:
+            baseline_mask = time_axis < 0
+            for arr_name in ['mcp_flexion', 'mcp_abduction', 'overall_flexion', 'overall_abduction']:
+                arr = locals()[arr_name]
+                for i in range(n_triggers):
+                    baseline_mean = np.nanmean(arr[i, baseline_mask])
+                    if not np.isnan(baseline_mean):
+                        arr[i, :] -= baseline_mean
+            print("  Baseline correction applied (pre-trigger mean subtracted)")
 
         return {
             'trigger_times': trigger_onset_times,
