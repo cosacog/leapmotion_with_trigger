@@ -41,11 +41,15 @@
 3. **Arduino Nano** (オプション、トリガーソースの一つ)
    - Arduino Nano互換品で動作確認済み（CH340チップ搭載品など）
    - CH340ドライバーが必要な場合あり
+   - (よくわかってません)FTDIドライバを入れる必要がある場合がありました。ドライバは[ここ](https://support.arduino.cc/hc/en-us/articles/4411305694610-Install-or-update-FTDI-drivers)から説明をたどってドライバをダウンロード、インストールするとよいと思います。
    - `arduino/ttl_trigger/ttl_trigger.ino` スケッチを書き込み
    - 配線: Pin 2 (D2) にTTL信号、GNDにグランド接続
    - pyserialが必要（`pip install pyserial`）
 
 ### セットアップ：ai作成のドキュメントで間違いがあるかも知れません
+
+- 参照ページ: [ultraleapのpython binding](https://github.com/ultraleap/leapc-python-bindings)
+  - 2026/3/30の時点ではpython 3.8はprecompileのライブラリ?があるとのことですが、ちょっとチョンボしたのか下のビルドが
 
 ```bash
 # リポジトリのクローン
