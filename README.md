@@ -49,12 +49,27 @@
 - 参照ページ: [ultraleapのpython binding](https://github.com/ultraleap/leapc-python-bindings)
   - 2026/3/30の時点ではpython 3.8はprecompileのライブラリ?があるとのことですが、ちょっとチョンボしたのか下のビルドが
 
-```bash
-# リポジトリのクローン
-git clone https://github.com/cosacog/leapmotion_with_trigger
-cd leapmotion_with_trigger
+### 1. リポジトリのクローン：パターン1-新規でクローン(ダウンロード)するとき: サブモジュールも含めて一括クローン
 
-# 仮想環境の作成と依存関係のインストール（Python 3.8 が必要）
+- 今いるディレクトリにleapmotion_with_triggerという名前でディレクトリを作ってその中にいろいろファイルをクローン(ダウンロード). 
+- サブモジュールとはultraleapのライブラリその他
+
+```cmd
+git clone --recurse-submodules https://github.com/cosacog/leapmotion_with_trigger.git
+```
+
+### 1-1. リポジトリのクローン：パターン2-既に普通にクローン(ダウンロード)している場合：サブモジュールだけクローン
+
+```cmd
+git pull
+git submodule update --init --recursive
+```
+
+### 2. 仮想環境の作成と依存関係のインストール（Python 3.8 が必要）
+
+- [参照ページ]((https://github.com/ultraleap/leapc-python-bindings))にprecompileのライブラリがあって云々と書いてありますが、自分が試した中では結局毎度ビルドが必要でした。仮想環境を作ってその中にライブラリを入れるのがよいかと思います。
+
+```cmd
 uv python install 3.8   # Python 3.8 が未インストールの場合
 uv venv --python 3.8
 uv pip install -r requirements.txt
