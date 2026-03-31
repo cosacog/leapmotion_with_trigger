@@ -40,11 +40,9 @@
 
 3. **Arduino Nano** (オプション、トリガーソースの一つ)
    - Arduino Nano互換品で動作確認済み（CH340チップ搭載品など）
-   - CH340ドライバーが必要な場合あり
-   - (よくわかってません)FTDIドライバを入れる必要がある場合がありました。ドライバは[ここ](https://support.arduino.cc/hc/en-us/articles/4411305694610-Install-or-update-FTDI-drivers)から説明をたどってドライバをダウンロード、インストールするとよいと思います。
+   - ドライバーが必要な場合あり：自分の環境(usb-c対応のarduino nano互換品)ではFTDIドライバを入れる必要がある場合がありました。ドライバは[ここ](https://support.arduino.cc/hc/en-us/articles/4411305694610-Install-or-update-FTDI-drivers)から説明をたどってドライバをダウンロード、インストールするとよいと思います。
    - `arduino/ttl_trigger/ttl_trigger.ino` スケッチを書き込み
    - 配線: Pin 2 (D2) にTTL信号、GNDにグランド接続
-   - pyserialが必要（`pip install pyserial`）
 
 ### セットアップ：ai作成のドキュメントで間違いがあるかも知れません
 
@@ -78,22 +76,34 @@ uv pip install -e leapc-python-api
 
 プロジェクトルートディレクトリから実行:
 
+#### 0. 環境のactivate
+
 ```cmd
 .venv\Scripts\activate
+```
+
+#### 1. 通常の場合: トリガーなしで記録
+
+```cmd
 python run_record_with_trigger.py
 ```
 
-もしくは src ディレクトリのスクリプトを直接実行：
+#### 1-1. 通常の場合2:直接実行スクリプトを走らせる
 
 ```cmd
-.venv\Scripts\activate
 python src\record_with_trigger.py
 ```
 
-もしarduinoを利用する時は
+#### 1-3. arduinoと利用する時は
 
 ```cmd
 python src\record_with_trigger.py --trigger arduino
+```
+
+#### 1-4. USB-IOと利用する時は
+
+```cmd
+python src\record_with_trigger.py --trigger usb-io
 ```
 
 **操作方法:**
@@ -116,15 +126,6 @@ python src\record_with_trigger.py --trigger arduino
     - `arduino_trigger_times_us`: Arduinoの`micros()`による生タイムスタンプ (マイクロ秒)
     - `trigger_onset_times_corrected`: Arduinoタイムスタンプをドリフト補正してPC時刻に変換 (秒、perf_counterベース)
     - `arduino_sync/`: Arduino-PC間のクロック同期ポイント
-
-### USB-IOモニターのテスト
-
-```bash
-cd tests
-python test_usb_io_monitor.py
-```
-
-USB-IOデバイスの接続とエッジ検出をテストします。
 
 ## 技術仕様
 
@@ -164,7 +165,7 @@ USB-IOデバイスの接続とエッジ検出をテストします。
 
 ## 開発
 
-### テストの実行
+### テストの実行: USB-IO
 
 ```bash
 # USB-IOモニターテスト
@@ -200,7 +201,7 @@ python test_usb_io_monitor.py
 **症状**: "Failed to connect to Arduino" または "No Arduino found"
 
 **解決策**:
-- CH340ドライバーがインストールされているか確認
+- CH340ドライバーがインストールされているか確認 (CH340チップのarduinoの場合)
 - デバイスマネージャーでCOMポート番号を確認し、`--port COM9` のように指定
 - Arduino IDEのシリアルモニタが開いていないか確認（ポートの競合）
 - `arduino/ttl_trigger/ttl_trigger.ino` がArduinoに書き込まれているか確認
