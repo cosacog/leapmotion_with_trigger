@@ -69,15 +69,20 @@ git submodule update --init --recursive
 
 - [参照ページ]((https://github.com/ultraleap/leapc-python-bindings))にprecompileのライブラリがあって云々と書いてありますが、自分が試した中では結局毎度ビルドが必要でした。仮想環境を作ってその中にライブラリを入れるのがよいかと思います。
 - uvを使った環境作成を想定しています。
+- コマンドプロンプト(cmd)。PowerShellでは `REM` がコメントとして認識されないため、`REM` 行を削除するか `#` に置き換えてください。また `set` の代わりに `$env:PYTHONUTF8=1` を使用してください。
+- 基本1行ずつ実行して(REMの行はスキップする)、エラーが出てないのを確認してください
 
 ```cmd
-uv python install 3.11   # Python 3.11 が未インストールの場合
+uv python install 3.11
+REM Python 3.11 が未インストールの場合。インストール済みならスキップ
 uv venv --python 3.11
 uv pip install -r requirements.txt
 
-# Leap Python APIのインストール（leapc-cffi は C拡張のビルドが必要）
-uv pip install -e leapc-cffi
-uv pip install -e leapc-python-api
+REM Leap Python APIのインストール（leapc-cffi は C拡張のビルドが必要）
+REM PYTHONUTF8=1 はLeapC.hの読み込み時のエンコードエラー回避のため必要
+set PYTHONUTF8=1
+uv pip install -e leapc-python-bindings/leapc-cffi
+uv pip install -e leapc-python-bindings/leapc-python-api
 ```
 
 注意点:
