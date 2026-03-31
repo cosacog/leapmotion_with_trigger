@@ -65,13 +65,14 @@ git pull
 git submodule update --init --recursive
 ```
 
-### 2. 仮想環境の作成と依存関係のインストール（Python 3.8 が必要）
+### 2. 仮想環境の作成と依存関係のインストール（Python 3.8以上。ビルドする場合は3.11でも可：実績として）
 
 - [参照ページ]((https://github.com/ultraleap/leapc-python-bindings))にprecompileのライブラリがあって云々と書いてありますが、自分が試した中では結局毎度ビルドが必要でした。仮想環境を作ってその中にライブラリを入れるのがよいかと思います。
+- uvを使った環境作成を想定しています。
 
 ```cmd
-uv python install 3.8   # Python 3.8 が未インストールの場合
-uv venv --python 3.8
+uv python install 3.11   # Python 3.11 が未インストールの場合
+uv venv --python 3.11
 uv pip install -r requirements.txt
 
 # Leap Python APIのインストール（leapc-cffi は C拡張のビルドが必要）
