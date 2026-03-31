@@ -47,7 +47,7 @@
 ### セットアップ：ai作成のドキュメントで間違いがあるかも知れません
 
 - 参照ページ: [ultraleapのpython binding](https://github.com/ultraleap/leapc-python-bindings)
-  - 2026/3/30の時点ではpython 3.8はprecompileのライブラリ?があるとのことですが、ちょっとチョンボしたのか下のビルドが
+- 要git: 2箇所のリポジトリのファイルを組み合わせてるのでダウンロードでは処理が難しいと思います
 
 ### 1. リポジトリのクローン：パターン1-新規でクローン(ダウンロード)するとき: サブモジュールも含めて一括クローン
 
@@ -76,7 +76,7 @@ git submodule update --init --recursive
 uv python install 3.11
 REM Python 3.11 が未インストールの場合。インストール済みならスキップ
 uv venv --python 3.11
-uv pip install -r requirements.txt
+uv pip install .
 
 REM Leap Python APIのインストール（leapc-cffi は C拡張のビルドが必要）
 REM PYTHONUTF8=1 はLeapC.hの読み込み時のエンコードエラー回避のため必要
@@ -89,7 +89,7 @@ uv pip install -e leapc-python-bindings/leapc-python-api
 
 - Ultraleap SDK の確認 — C:\Program Files\Ultraleap\LeapSDK または LEAPSDK_INSTALL_LOCATION 環境変数のパスをチェック。見つからない場合は警告して継続可否を確認
 - leapc-cffi のビルドに Visual Studio Build Tools（「C++ によるデスクトップ開発」ワークロード）が必要です。未インストールの場合はエラーメッセージが出ます
-- Ultraleap SDK がデフォルト以外の場所にある場合は、事前に環境変数を設定してください:
+- Ultraleap SDK がデフォルト以外の場所にある場合は、事前に環境変数を設定してください
 
 ## 使い方
 
