@@ -40,17 +40,16 @@
 
 3. **Arduino Nano** (オプション、トリガーソースの一つ)
    - Arduino Nano互換品で動作確認済み（CH340チップ搭載品など）
-   - CH340ドライバーが必要な場合あり
-   - (よくわかってません)FTDIドライバを入れる必要がある場合がありました。ドライバは[ここ](https://support.arduino.cc/hc/en-us/articles/4411305694610-Install-or-update-FTDI-drivers)から説明をたどってドライバをダウンロード、インストールするとよいと思います。
+   - ドライバーが必要な場合あり：自分の環境(usb-c対応のarduino nano互換品)ではFTDIドライバを入れる必要がある場合がありました。ドライバは[ここ](https://support.arduino.cc/hc/en-us/articles/4411305694610-Install-or-update-FTDI-drivers)から説明をたどってドライバをダウンロード、インストールするとよいと思います。
    - `arduino/ttl_trigger/ttl_trigger.ino` スケッチを書き込み
    - 配線: Pin 2 (D2) にTTL信号、GNDにグランド接続
-   - pyserialが必要（`pip install pyserial`）
 
 4. Visual Studio Build Tools: leapc-cffi のビルドに必要です。未インストールの場合はエラーメッセージが出ます。いろいろメニューがありますが「C++ によるデスクトップ開発」ワークロードというのが必要な本体です。
 
 ## セットアップ：間違いがあるかも知れません. 悪しからず
 
 - 参照ページ: [ultraleapのpython binding](https://github.com/ultraleap/leapc-python-bindings)
+<<<<<<< HEAD
 
 ### 1. リポジトリのクローン：パターン1-新規でクローン(ダウンロード)するとき: サブモジュールも含めて一括クローン
 
@@ -76,17 +75,56 @@ git submodule update --init --recursive
 uv python install 3.8   # Python 3.8 が未インストールの場合
 uv venv --python 3.8
 uv pip install -r requirements.txt
+=======
+- 要git: 2箇所のリポジトリのファイルを組み合わせてるのでダウンロードでは処理が難しいと思います
 
-# Leap Python APIのインストール（leapc-cffi は C拡張のビルドが必要）
-uv pip install -e leapc-cffi
-uv pip install -e leapc-python-api
+### 1. リポジトリのクローン：パターン1-新規でクローン(ダウンロード)するとき: サブモジュールも含めて一括クローン
+
+- 今いるディレクトリにleapmotion_with_triggerという名前でディレクトリを作ってその中にいろいろファイルをクローン(ダウンロード). 
+- サブモジュールとはultraleapのライブラリその他
+>>>>>>> deb7f78a157cb521a90a9c03e039e0839ce395de
+
+```cmd
+git clone --recurse-submodules https://github.com/cosacog/leapmotion_with_trigger.git
+```
+
+### 1-1. リポジトリのクローン：パターン2-既に普通にクローン(ダウンロード)している場合：サブモジュールだけクローン
+
+```cmd
+git pull
+git submodule update --init --recursive
+```
+
+### 2. 仮想環境の作成と依存関係のインストール（Python 3.8以上。ビルドする場合は3.11でも可：実績として）
+
+- [参照ページ]((https://github.com/ultraleap/leapc-python-bindings))にprecompileのライブラリがあって云々と書いてありますが、自分が試した中では結局毎度ビルドが必要でした。仮想環境を作ってその中にライブラリを入れるのがよいかと思います。
+- uvを使った環境作成を想定しています。
+- コマンドプロンプト(cmd)。PowerShellでは `REM` がコメントとして認識されないため、`REM` 行を削除するか `#` に置き換えてください。また `set` の代わりに `$env:PYTHONUTF8=1` を使用してください。
+- 基本1行ずつ実行して(REMの行はスキップする)、エラーが出てないのを確認してください
+
+```cmd
+uv python install 3.11
+REM Python 3.11 が未インストールの場合。インストール済みならスキップ
+uv venv --python 3.11
+uv pip install .
+
+REM Leap Python APIのインストール（leapc-cffi は C拡張のビルドが必要）
+REM PYTHONUTF8=1 はLeapC.hの読み込み時のエンコードエラー回避のため必要
+set PYTHONUTF8=1
+uv pip install -e leapc-python-bindings/leapc-cffi
+uv pip install -e leapc-python-bindings/leapc-python-api
 ```
 
 注意点:
 
 - Ultraleap SDK の確認 — C:\Program Files\Ultraleap\LeapSDK または LEAPSDK_INSTALL_LOCATION 環境変数のパスをチェック。見つからない場合は警告して継続可否を確認
+<<<<<<< HEAD
 - 
 - Ultraleap SDK がデフォルト以外の場所にある場合は、事前に環境変数を設定してください:
+=======
+- leapc-cffi のビルドに Visual Studio Build Tools（「C++ によるデスクトップ開発」ワークロード）が必要です。未インストールの場合はエラーメッセージが出ます
+- Ultraleap SDK がデフォルト以外の場所にある場合は、事前に環境変数を設定してください
+>>>>>>> deb7f78a157cb521a90a9c03e039e0839ce395de
 
 ## 使い方
 
@@ -94,22 +132,34 @@ uv pip install -e leapc-python-api
 
 プロジェクトルートディレクトリから実行:
 
+#### 0. 環境のactivate
+
 ```cmd
 .venv\Scripts\activate
+```
+
+#### 1. 通常の場合: トリガーなしで記録
+
+```cmd
 python run_record_with_trigger.py
 ```
 
-もしくは src ディレクトリのスクリプトを直接実行：
+#### 1-1. 通常の場合2:直接実行スクリプトを走らせる
 
 ```cmd
-.venv\Scripts\activate
 python src\record_with_trigger.py
 ```
 
-もしarduinoを利用する時は
+#### 1-3. arduinoと利用する時は
 
 ```cmd
 python src\record_with_trigger.py --trigger arduino
+```
+
+#### 1-4. USB-IOと利用する時は
+
+```cmd
+python src\record_with_trigger.py --trigger usb-io
 ```
 
 **操作方法:**
@@ -132,15 +182,6 @@ python src\record_with_trigger.py --trigger arduino
     - `arduino_trigger_times_us`: Arduinoの`micros()`による生タイムスタンプ (マイクロ秒)
     - `trigger_onset_times_corrected`: Arduinoタイムスタンプをドリフト補正してPC時刻に変換 (秒、perf_counterベース)
     - `arduino_sync/`: Arduino-PC間のクロック同期ポイント
-
-### USB-IOモニターのテスト
-
-```bash
-cd tests
-python test_usb_io_monitor.py
-```
-
-USB-IOデバイスの接続とエッジ検出をテストします。
 
 ## 技術仕様
 
@@ -180,7 +221,7 @@ USB-IOデバイスの接続とエッジ検出をテストします。
 
 ## 開発
 
-### テストの実行
+### テストの実行: USB-IO
 
 ```bash
 # USB-IOモニターテスト
@@ -216,7 +257,7 @@ python test_usb_io_monitor.py
 **症状**: "Failed to connect to Arduino" または "No Arduino found"
 
 **解決策**:
-- CH340ドライバーがインストールされているか確認
+- CH340ドライバーがインストールされているか確認 (CH340チップのarduinoの場合)
 - デバイスマネージャーでCOMポート番号を確認し、`--port COM9` のように指定
 - Arduino IDEのシリアルモニタが開いていないか確認（ポートの競合）
 - `arduino/ttl_trigger/ttl_trigger.ino` がArduinoに書き込まれているか確認
