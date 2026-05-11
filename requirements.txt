@@ -20,6 +20,9 @@ pynput>=1.7.0
 # USB-HID device communication (for USB-IO 2.0)
 hidapi>=0.12.0
 
+# Serial communication (for Arduino trigger monitor)
+pyserial>=3.5
+
 # Leap Motion SDK
 # Note: Install separately from Ultraleap's official repository
 # https://developer.leapmotion.com/tracking-software-download

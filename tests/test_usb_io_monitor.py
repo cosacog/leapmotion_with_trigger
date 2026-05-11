@@ -2,7 +2,30 @@
 """
 USB-IO Monitor Test Script
 Demonstrates event-driven pulse detection with callbacks.
+
+配線
+外部TTLデバイス        USB-IO2.0
+┌──────────┐      ┌──────────┐
+│ TTL出力  │─────→│ J2-0     │
+│          │      │          │
+│ GND      │──────│ GND      │
+└──────────┘      └──────────┘
+
+テスト用にタクトスイッチ(単に接続-切り離しをするボタン)を使用する場合は、以下のように配線してください。
+タクトスイッチ         USB-IO 2.0
+                      J2コネクタ
+  ┌────────┐          ┌─────────┐
+  │  端子A │──────────│ J2-0    │ ← ピン1 (LSB)
+  │        │          │         │
+  │  端子B │──────────│ GND     │
+  └────────┘          └─────────┘
+                      (内部10kΩで+5Vにプルアップ済み)
+これだけです。追加の抵抗・電源は不要。
 """
+
+import sys
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 import time
 from usb_io_monitor import USBIOMonitor, USBIOMonitorContext

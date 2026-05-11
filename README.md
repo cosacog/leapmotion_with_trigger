@@ -46,17 +46,33 @@
    - 配線: Pin 2 (D2) にTTL信号、GNDにグランド接続
    - pyserialが必要（`pip install pyserial`）
 
-### セットアップ：ai作成のドキュメントで間違いがあるかも知れません
+4. Visual Studio Build Tools: leapc-cffi のビルドに必要です。未インストールの場合はエラーメッセージが出ます。いろいろメニューがありますが「C++ によるデスクトップ開発」ワークロードというのが必要な本体です。
+
+## セットアップ：間違いがあるかも知れません. 悪しからず
 
 - 参照ページ: [ultraleapのpython binding](https://github.com/ultraleap/leapc-python-bindings)
-  - 2026/3/30の時点ではpython 3.8はprecompileのライブラリ?があるとのことですが、ちょっとチョンボしたのか下のビルドが
+
+### 1. リポジトリのクローン：パターン1-新規でクローン(ダウンロード)するとき: サブモジュールも含めて一括クローン
+
+- 今いるディレクトリにleapmotion_with_triggerという名前でディレクトリを作ってその中にいろいろファイルをクローン(ダウンロード). 
+- サブモジュールとはultraleapのライブラリその他
 
 ```bash
-# リポジトリのクローン
-git clone https://github.com/cosacog/leapmotion_with_trigger
-cd leapmotion_with_trigger
+git clone --recurse-submodules https://github.com/cosacog/leapmotion_with_trigger.git
+```
 
-# 仮想環境の作成と依存関係のインストール（Python 3.8 が必要）
+### 1-1. リポジトリのクローン：パターン2-既に普通にクローン(ダウンロード)している場合：サブモジュールだけクローン
+
+```bash
+git pull
+git submodule update --init --recursive
+```
+
+### 2. 仮想環境の作成と依存関係のインストール（Python 3.8 が必要）
+
+- [参照ページ]((https://github.com/ultraleap/leapc-python-bindings))にprecompileのライブラリがあって云々と書いてありますが、自分が試した中では結局毎度ビルドが必要でした。仮想環境を作ってその中にライブラリを入れるのがよいかと思います。
+
+```bash
 uv python install 3.8   # Python 3.8 が未インストールの場合
 uv venv --python 3.8
 uv pip install -r requirements.txt
@@ -69,7 +85,7 @@ uv pip install -e leapc-python-api
 注意点:
 
 - Ultraleap SDK の確認 — C:\Program Files\Ultraleap\LeapSDK または LEAPSDK_INSTALL_LOCATION 環境変数のパスをチェック。見つからない場合は警告して継続可否を確認
-- leapc-cffi のビルドに Visual Studio Build Tools（「C++ によるデスクトップ開発」ワークロード）が必要です。未インストールの場合はエラーメッセージが出ます
+- 
 - Ultraleap SDK がデフォルト以外の場所にある場合は、事前に環境変数を設定してください:
 
 ## 使い方
