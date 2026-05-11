@@ -164,7 +164,17 @@ python tools/usb_io_polling_benchmark.py --duration 10
 
 ### `usb_io2_0_push_button_checker.py`
 
-J2-0 ピンを監視してタクトスイッチ等によるパルス信号の立ち上がり・立ち下がりエッジを検出し、パルス幅（ミリ秒）を測定する。
+J2-0 ピンを監視してタクトスイッチ等によるパルス信号の立ち上がり・立ち下がりエッジを検出し、パルス幅（ミリ秒）を測定する。`hid` を直接操作するスタンドアロン確認ツール（学習・動作確認用）。
+
+**`tests/test_usb_io_monitor.py` との比較:**
+
+同じ J2-0 ピン監視・エッジ検出・パルス幅計測を行うが、設計レベルが異なる。
+
+| | `usb_io2_0_push_button_checker.py` | `tests/test_usb_io_monitor.py` |
+| --- | --- | --- |
+| 設計 | スタンドアロン（HID 直接操作） | `USBIOMonitor` クラス経由 |
+| 機能 | シンプルなパルス検出 | コールバック・統計・コンテキストマネージャ対応 |
+| 用途 | 動作確認・学習 | モジュールのデモ兼インテグレーションテスト |
 
 ```bash
 python tools/usb_io2_0_push_button_checker.py

@@ -21,6 +21,11 @@ Demonstrates event-driven pulse detection with callbacks.
   └────────┘          └─────────┘
                       (内部10kΩで+5Vにプルアップ済み)
 これだけです。追加の抵抗・電源は不要。
+
+tools/usb_io2_0_push_button_checker.py との比較:
+- usb_io2_0_push_button_checker.py: hid を直接操作するスタンドアロン確認ツール（学習・動作確認用）
+- test_usb_io_monitor.py (本スクリプト): USBIOMonitor クラスのデモ兼テスト
+  コールバック・統計・コンテキストマネージャに対応し、前者の機能を上位互換として内包する。
 """
 
 import sys
